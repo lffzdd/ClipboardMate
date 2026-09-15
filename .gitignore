@@ -1,0 +1,17 @@
+# Build products & cache
+.build/
+.cache/
+build/
+*.dmg
+*.app
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode & SwiftPM
+.swiftpm/
+DerivedData/
+*.xcuserstate
+xcuserdata/
