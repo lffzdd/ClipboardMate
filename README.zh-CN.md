@@ -2,20 +2,7 @@
 
 [English](README.md) | **中文**
 
-<!--
-  图片位置 — 把 Mac 上截的图按同名文件放进来，中英文 README 会一起用上。
-  docs/hero.png              首屏：菜单栏图标 + 真实桌面上的历史面板
-  docs/history-panel.png     历史面板，列表和底部提示要看得见
-  docs/search.png            搜索，最好是拼音命中中文
-  docs/markdown-preview.png  侧边预览：Markdown 和带高亮的代码块
-  docs/paste-queue-hud.png   悬浮的填表队列胶囊
-  docs/preferences.png       偏好设置菜单（菜单栏右键，或面板里的齿轮）
-  docs/demo.gif              逐项粘贴：每贴一项，队列往前走一格
--->
-
-<p align="center">
-  <img src="docs/hero.png" alt="菜单栏里的 ClipboardMate，历史面板已打开" width="920">
-</p>
+<img src="docs/hero.png" alt="菜单栏里的 ClipboardMate，历史面板打开，填表队列悬浮在新建联系人表单上" width="100%">
 
 <p align="center">
   <strong>姓名、电话、地址，按复制的顺序，一项一项贴进表单。</strong>
@@ -41,6 +28,14 @@ ClipboardMate 住在菜单栏里。你复制的纯文本、HTML / RTF、图片�
 
 真正会让你留下来的是填表队列。按表单顺序复制好每一项，按 <kbd>⌘S</kbd>，屏幕底部浮出一颗毛玻璃胶囊。它标出下一项，以及排在后面的几项，并且不抢走键盘。每按一次 <kbd>⌘V</kbd>，就填进下一个格子。
 
+<p align="center">
+  <img src="docs/demo.gif" alt="逐项把姓名、电话、地址、城市贴进表单，从 1/4 到粘贴队列已全部完成" width="720">
+</p>
+
+<p align="center">
+  <sub>一张「New Contact」表单，按复制顺序被填满。胶囊从 <strong>1/4</strong> 走到 <strong>4/4</strong>：Alex Chen、138-0013-8000、88 Market Street、San Francisco，最后停在 <strong>Paste queue finished</strong>（粘贴队列已全部完成）。</sub>
+</p>
+
 ## 为什么是 ClipboardMate
 
 | 按顺序填完一张表 | 手不用离开键盘 | 就在这台 Mac 上 |
@@ -49,49 +44,48 @@ ClipboardMate 住在菜单栏里。你复制的纯文本、HTML / RTF、图片�
 
 ## 看一眼
 
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/history-panel.png" alt="历史面板停在「全部」，里面有链接、图片、颜色、文件和笔记" width="380"><br>
+      <sub><strong>历史。</strong>「全部」分类，前几行标着 <kbd>⌘1</kbd>–<kbd>⌘9</kbd>。一条链接、一张截图、<code>#007AFF</code>、Design Notes.pdf，还有一条以「发布说明」开头的笔记。</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/search.png" alt="搜索框输入 fabu，命中「发布说明」" width="380"><br>
+      <sub><strong>拼音搜索。</strong>输入 <code>fabu</code>，命中「发布说明：ClipboardMate 1.2 已发布。」里的「发布」。</sub>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">
+      <img src="docs/markdown-preview.png" alt="侧边预览里的发布说明，以及带语法高亮的 Swift 代码块" width="880"><br>
+      <sub><strong>Markdown 和代码。</strong>预览已打开。Swift 示例带着颜色，代码块自己有一个 Copy。312 字符，14 行。</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/paste-queue-hud.png" alt="填表队列胶囊，进度 1/4，下一项是 Alex Chen" width="420"><br>
+      <sub><strong>填表队列，1/4。</strong>下一项是「姓名 (Name) Alex Chen」。电话、地址、城市排在后面。<kbd>⌘V</kbd> 粘贴，<kbd>⌘Z</kbd> 回退，<kbd>Esc</kbd> 清空。</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/preferences.png" alt="菜单栏右键打开的偏好设置" width="420"><br>
+      <sub><strong>偏好设置</strong>，从菜单栏图标右键打开。图里开着的是 <kbd>⌘⇧V</kbd>、开机自启动、屏幕居中、200 条，以及回车自动粘贴。</sub>
+    </td>
+  </tr>
+</table>
+
 ### 一个快捷键，历史就在眼前
-
-<!-- image-slot: docs/history-panel.png — 历史面板 -->
-
-<p align="center">
-  <img src="docs/history-panel.png" alt="带分类、列表和底部粘贴提示的历史面板" width="820">
-</p>
 
 点菜单栏图标，或按 <kbd>⌘⇧V</kbd>。文本、图片、文件、链接和颜色排成一列，最新的在最上面，前九行标着 <kbd>⌘1</kbd>–<kbd>⌘9</kbd>。用 **全部 · 文本 · 图片 · 文件 · 链接 · 置顶** 过滤。常用的钉住。按 <kbd>⌘R</kbd> 起一个别名，之后用这个名字就能搜到。
 
 ### 搜索，包括拼音
 
-<!-- image-slot: docs/search.png — 搜索，最好能看到拼音 -->
-
-<p align="center">
-  <img src="docs/search.png" alt="用拼音搜到中文剪贴板内容" width="820">
-</p>
-
-直接在搜索框里打。空格分开的每个词都要命中。中文可以按汉字、全拼或首字母匹配 —— 输入 `zs` 能找到「张三」。很长的内容，会在开头约四千字里匹配。<kbd>Esc</kbd> 先清掉搜索，再关面板。
+直接在搜索框里打。空格分开的每个词都要命中。中文可以按汉字、全拼或首字母匹配 —— 输入 `fabu` 能找到「发布」。很长的内容，会在开头约四千字里匹配。<kbd>Esc</kbd> 先清掉搜索，再关面板。
 
 ### Markdown 和代码，打开就是排好的
-
-<!-- image-slot: docs/markdown-preview.png — Markdown 与代码预览 -->
-
-<p align="center">
-  <img src="docs/markdown-preview.png" alt="侧边预览里的 Markdown 和带语法高亮的代码块" width="820">
-</p>
 
 搜索框是空的时候，按 <kbd>Space</kbd> 展开侧边预览。Markdown 可以看排版，也可以看原文。围栏里的代码会高亮，点一下就复制这一块。图片会做文字识别（Vision OCR），<kbd>⌥↵</kbd> 把识别出的字贴出去。链接用 <kbd>⌘O</kbd> 在浏览器打开。文件在访达里显示。十六进制颜色会画出色块，并能复制 HEX、RGB 或 HSL。图片双击进入快速查看。
 
 ### 填表队列胶囊
-
-<!-- image-slot: docs/paste-queue-hud.png — 悬浮填表队列 -->
-
-<p align="center">
-  <img src="docs/paste-queue-hud.png" alt="显示下一项的悬浮填表队列胶囊" width="520">
-</p>
-
-<!-- image-slot: docs/demo.gif — 逐项粘贴演示 -->
-
-<p align="center">
-  <img src="docs/demo.gif" alt="表单随着填表队列逐项被填上" width="820">
-</p>
 
 四步：
 
@@ -106,13 +100,7 @@ ClipboardMate 住在菜单栏里。你复制的纯文本、HTML / RTF、图片�
 
 ### 偏好设置
 
-<!-- image-slot: docs/preferences.png — 偏好设置菜单 -->
-
-<p align="center">
-  <img src="docs/preferences.png" alt="从菜单栏打开的偏好设置" width="420">
-</p>
-
-右键菜单栏图标，或点面板里的齿轮。
+右键菜单栏图标，或点面板里的齿轮。截图里的菜单就是应用里的那一份：唤出快捷键 <kbd>⌘⇧V</kbd>、开机自启动、再次打开时保留搜索和分类、点外面或切换应用时关闭（图中的延迟是 0.6 秒）、界面语言跟随系统、屏幕居中、200 条、忽略密码管理器，以及回车自动粘贴。
 
 | | |
 | --- | --- |
