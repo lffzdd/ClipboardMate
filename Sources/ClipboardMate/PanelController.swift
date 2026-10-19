@@ -1456,9 +1456,12 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
 
     private func applyPreviewAttributedText(_ attributed: NSAttributedString) {
         guard let storage = previewTextView.textStorage else { return }
+        // End the edit before layout. ensureLayout(for:) throws
+        // NSInternalInconsistencyException if it runs while the storage is still editing,
+        // which is what a deferred endEditing() does when search refreshes an open preview.
         storage.beginEditing()
-        defer { storage.endEditing() }
         storage.setAttributedString(attributed)
+        storage.endEditing()
 
         let font = (attributed.length > 0 ? attributed.attribute(.font, at: 0, effectiveRange: nil) as? NSFont : nil)
             ?? .systemFont(ofSize: 13)
