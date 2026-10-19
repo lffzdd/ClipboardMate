@@ -23,14 +23,37 @@ extension NSAttributedString {
 /// Fenced code background. `NSTextBlock` has no corner radius, so the fill and stroke are drawn here.
 final class RoundedCodeTextBlock: NSTextBlock {
     override func drawBackground(withFrame frameRect: NSRect, in controlView: NSView?, characterRange charRange: NSRange, layoutManager: NSLayoutManager) {
-        let rect = frameRect.insetBy(dx: 0.5, dy: 0.5)
-        guard rect.width > 2, rect.height > 2 else { return }
-        let path = NSBezierPath(roundedRect: rect, xRadius: 12, yRadius: 12)
+        let box = blockBounds(fallback: frameRect, controlView: controlView, layoutManager: layoutManager).insetBy(dx: 0.5, dy: 0.5)
+        guard box.width > 2, box.height > 2 else { return }
+        let path = NSBezierPath(roundedRect: box, xRadius: 12, yRadius: 12)
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: frameRect).addClip()
         fillColor(for: controlView).setFill()
         path.fill()
         NSColor.separatorColor.setStroke()
         path.lineWidth = 1
         path.stroke()
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    /// Partial redraws pass a single line. A rounded rect of that line paints over the syntax colors.
+    private func blockBounds(fallback: NSRect, controlView: NSView?, layoutManager: NSLayoutManager) -> NSRect {
+        guard let storage = layoutManager.textStorage,
+              let container = layoutManager.textContainers.first else { return fallback }
+        var union: NSRange?
+        storage.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let style = value as? NSParagraphStyle,
+                  style.textBlocks.contains(where: { $0 === self }) else { return }
+            union = union.map { NSUnionRange($0, range) } ?? range
+        }
+        guard let union, union.length > 0 else { return fallback }
+        let glyphs = layoutManager.glyphRange(forCharacterRange: union, actualCharacterRange: nil)
+        guard glyphs.length > 0 else { return fallback }
+        var rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: container)
+        let origin = (controlView as? NSTextView)?.textContainerOrigin ?? .zero
+        rect.origin.x += origin.x
+        rect.origin.y += origin.y
+        return rect.insetBy(dx: -8, dy: -4)
     }
 
     private func fillColor(for view: NSView?) -> NSColor {
