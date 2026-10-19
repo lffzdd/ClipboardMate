@@ -51,7 +51,7 @@ enum L10n {
     static var preferences: String { isChinese ? "偏好设置" : "Preferences" }
     static var panelOpacity: String { isChinese ? "玻璃透明度" : "Glass Transparency" }
     static var panelOpacityHint: String {
-        isChinese ? "只改变毛玻璃的罩色。越低越实，文字保持清晰。最右端是现在的玻璃。" : "Changes only the frost. Lower is more solid, and text stays sharp. The right end is the current glass."
+        isChinese ? "最右端是最初那档毛玻璃。往左更实，文字保持清晰。" : "The right end is the original glass. Lower is more solid, and text stays sharp."
     }
     static var panelOpacityReduced: String { isChinese ? "系统实色" : "Solid" }
     static func panelOpacityPercent(_ percent: Int) -> String { "\(percent)%" }
@@ -77,6 +77,10 @@ enum L10n {
     }
     static var closeOnAppSwitch: String {
         isChinese ? "切换应用时自动关闭" : "Close When Switching Apps"
+    }
+    static var panelStayOpen: String { isChinese ? "保持打开" : "Keep Open" }
+    static var panelStayOpenOn: String {
+        isChinese ? "已保持打开。再点一次，或手动关闭后，恢复自动关闭" : "Staying open. Click again, or close the panel, to resume auto-close"
     }
     static var mergeNoPasteableContent: String {
         isChinese ? "选中项没有可合并的文本（图片需 OCR 或选文本/文件）" : "Selection has no mergeable text (images need OCR, or pick text/files)"
@@ -412,6 +416,7 @@ enum L10n {
             唤出 / 关闭
             • \(HotkeyPreset.cmdShiftV.shortcutGlyph)（可在偏好设置中更换）— 显示或隐藏历史面板
             • Esc — 先清空搜索，再关闭面板
+            • 搜索框旁的图钉 — 这次保持打开，不因点外面或切换应用而关闭
 
             面板内（焦点在列表或搜索框）
             • ↵ — 粘贴选中项（多选时换行合并）
@@ -448,6 +453,7 @@ enum L10n {
             Show / dismiss
             • \(HotkeyPreset.cmdShiftV.shortcutGlyph) (configurable) — Toggle history panel
             • Esc — Clear search, then close panel
+            • Pin beside search — Keep this panel open across outside clicks and app switches
 
             In panel (list or search focus)
             • Return — Paste selection (multi-select: newline merge)

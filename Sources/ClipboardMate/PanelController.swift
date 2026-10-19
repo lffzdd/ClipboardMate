@@ -382,6 +382,8 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
     private var tableView: ClipboardTableView!
     private var emptyLabel: NSTextField!
     private var settingsButton: NSButton!
+    private var stayOpenButton: NSButton!
+    private var panelStayOpen = false
     private var pastePrimaryButton: NSButton!
     private var bottomHintLabel: NSTextField!
     private var displayItems: [ClipItem] = []
@@ -686,6 +688,16 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         settingsButton.contentTintColor = .secondaryLabelColor
         settingsButton.translatesAutoresizingMaskIntoConstraints = false
         leftContainer.addSubview(settingsButton)
+
+        stayOpenButton = NSButton()
+        stayOpenButton.bezelStyle = .regularSquare
+        stayOpenButton.isBordered = false
+        stayOpenButton.imageScaling = .scaleProportionallyDown
+        stayOpenButton.target = self
+        stayOpenButton.action = #selector(togglePanelStayOpen)
+        stayOpenButton.translatesAutoresizingMaskIntoConstraints = false
+        leftContainer.addSubview(stayOpenButton)
+        updateStayOpenButton()
 
         // 分类切换 SegmentedControl
         segmentedControl = NSSegmentedControl(
@@ -1128,8 +1140,13 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
 
             searchField.topAnchor.constraint(equalTo: leftContainer.topAnchor, constant: 12),
             searchField.leadingAnchor.constraint(equalTo: leftContainer.leadingAnchor, constant: 12),
-            searchField.trailingAnchor.constraint(equalTo: settingsButton.leadingAnchor, constant: -8),
+            searchField.trailingAnchor.constraint(equalTo: stayOpenButton.leadingAnchor, constant: -6),
             searchField.heightAnchor.constraint(equalToConstant: 28),
+
+            stayOpenButton.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
+            stayOpenButton.trailingAnchor.constraint(equalTo: settingsButton.leadingAnchor, constant: -2),
+            stayOpenButton.widthAnchor.constraint(equalToConstant: 24),
+            stayOpenButton.heightAnchor.constraint(equalToConstant: 24),
 
             settingsButton.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
             settingsButton.trailingAnchor.constraint(equalTo: leftContainer.trailingAnchor, constant: -12),
@@ -1806,8 +1823,8 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             return event
         }
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
-            guard Self.closePanelOnOutsideClick else { return }
-            self?.hidePanel()
+            guard let self, Self.closePanelOnOutsideClick, !self.panelStayOpen else { return }
+            self.hidePanel()
         }
     }
 
@@ -1853,11 +1870,31 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
     func hidePanel() {
         guard panel.isVisible else { return }
         if NSApp.modalWindow != nil { return }
+        panelStayOpen = false
+        updateStayOpenButton()
         persistPanelFilterState()
         panel.orderOut(nil)
     }
 
+    @objc private func togglePanelStayOpen() {
+        panelStayOpen.toggle()
+        updateStayOpenButton()
+    }
+
+    private func updateStayOpenButton() {
+        guard stayOpenButton != nil else { return }
+        let symbol = panelStayOpen ? "pin.fill" : "pin"
+        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: L10n.panelStayOpen) {
+            image.isTemplate = true
+            stayOpenButton.image = image
+        }
+        stayOpenButton.contentTintColor = panelStayOpen ? .controlAccentColor : .secondaryLabelColor
+        stayOpenButton.toolTip = panelStayOpen ? L10n.panelStayOpenOn : L10n.panelStayOpen
+        stayOpenButton.setAccessibilityLabel(L10n.panelStayOpen)
+    }
+
     @objc private func frontAppChanged(_ notification: Notification) {
+        guard !panelStayOpen else { return }
         guard Self.closePanelOnAppSwitch else { return }
         guard panel.isVisible else { return }
         guard NSApp.modalWindow == nil else { return }
@@ -2120,7 +2157,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
 
     static let panelGlassTransparencyKey = "panelGlassTransparency"
 
-    /// 1 是不加罩的毛玻璃，0 是实色罩。文字不跟着变淡。
+    /// 1 是最初那档 popover 玻璃，不加罩；0 是实色罩。文字不跟着变淡。
     static var storedGlassTransparency: CGFloat {
         let raw = UserDefaults.standard.object(forKey: panelGlassTransparencyKey) as? Double ?? 1
         return CGFloat(min(1, max(0, raw)))
