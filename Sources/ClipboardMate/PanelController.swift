@@ -263,7 +263,6 @@ final class PreviewTextView: NSTextView {
     }
 
     var onMarkdownCodeCopy: ((Int) -> Void)?
-    private var hoveredCopyRange: NSRange?
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -279,18 +278,11 @@ final class PreviewTextView: NSTextView {
     }
 
     override func mouseMoved(with event: NSEvent) {
-        if let range = markdownCodeCopy(at: event)?.range {
+        if markdownCodeCopy(at: event) != nil {
             NSCursor.pointingHand.set()
-            setCopyHover(true, range: range)
         } else {
-            clearCopyHover()
             super.mouseMoved(with: event)
         }
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        clearCopyHover()
-        super.mouseExited(with: event)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -325,11 +317,19 @@ final class PreviewTextView: NSTextView {
     }
 
     private func markdownCodeCopy(at event: NSEvent) -> (index: Int, range: NSRange)? {
-        guard let storage = textStorage else { return nil }
-        let index = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
+        guard let storage = textStorage, let layoutManager, let container = textContainer else { return nil }
+        let point = convert(event.locationInWindow, from: nil)
+        let local = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        var fraction: CGFloat = 0
+        let index = layoutManager.characterIndex(for: local, in: container, fractionOfDistanceBetweenInsertionPoints: &fraction)
         guard index >= 0, index < storage.length else { return nil }
         var range = NSRange(location: 0, length: 0)
-        let value = storage.attribute(.markdownCodeCopyIndex, at: index, effectiveRange: &range)
+        guard (storage.attribute(.markdownChrome, at: index, effectiveRange: &range) as? Bool) == true else { return nil }
+        let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        guard glyphs.length > 0 else { return nil }
+        let glyphRect = layoutManager.boundingRect(forGlyphRange: glyphs, in: container)
+        guard glyphRect.insetBy(dx: -6, dy: -2).contains(local) else { return nil }
+        let value = storage.attribute(.markdownCodeCopyIndex, at: index, effectiveRange: nil)
         let blockIndex: Int?
         if let index = value as? Int {
             blockIndex = index
@@ -340,25 +340,6 @@ final class PreviewTextView: NSTextView {
         }
         guard let blockIndex else { return nil }
         return (blockIndex, range)
-    }
-
-    private func setCopyHover(_ hovering: Bool, range: NSRange) {
-        guard let storage = textStorage, NSMaxRange(range) <= storage.length else { return }
-        if hoveredCopyRange == range, hovering { return }
-        if let previous = hoveredCopyRange, previous != range, NSMaxRange(previous) <= storage.length {
-            storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: previous)
-        }
-        storage.addAttribute(
-            .foregroundColor,
-            value: hovering ? NSColor.labelColor : NSColor.secondaryLabelColor,
-            range: range
-        )
-        hoveredCopyRange = hovering ? range : nil
-    }
-
-    private func clearCopyHover() {
-        guard let range = hoveredCopyRange else { return }
-        setCopyHover(false, range: range)
     }
 }
 
@@ -475,6 +456,21 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         if let appDelegate = NSApp.delegate as? AppDelegate {
             appDelegate.flashStatusMessage(message, duration: 2.5)
         }
+    }
+
+    private var bottomHintRestoreWork: DispatchWorkItem?
+
+    private func flashTransientBottomHint(_ message: String) {
+        bottomHintRestoreWork?.cancel()
+        bottomHintLabel.stringValue = message
+        if let appDelegate = NSApp.delegate as? AppDelegate {
+            appDelegate.flashStatusMessage(message, duration: 1.2)
+        }
+        let work = DispatchWorkItem { [weak self] in
+            self?.updateBottomHint()
+        }
+        bottomHintRestoreWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: work)
     }
     private var previewBaseAttributedCache: NSAttributedString?
     private var previewBaseCacheItemID: UUID?
@@ -1486,6 +1482,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         guard previewCodeBlocks.indices.contains(index) else { return }
         ClipboardStore.shared.writeStringToPasteboard(previewCodeBlocks[index])
         triggerHaptic()
+        flashTransientBottomHint(L10n.codeBlockCopied)
     }
 
     private func setupContextMenu(for table: NSTableView) {

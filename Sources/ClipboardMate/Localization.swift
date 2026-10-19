@@ -154,6 +154,7 @@ enum L10n {
     static var pasteEnter: String { isChinese ? "粘贴（↵）" : "Paste (↵)" }
     static var snippet: String { isChinese ? "代码片段" : "Snippet" }
     static var codeLabel: String { isChinese ? "代码片段" : "Code" }
+    static var codeBlockCopied: String { isChinese ? "已复制" : "Copied" }
     static var markdownPreview: String { isChinese ? "预览" : "Preview" }
     static var markdownRaw: String { isChinese ? "原文" : "Raw" }
     static var markdownTypePreview: String { isChinese ? "Markdown（预览）" : "Markdown (Preview)" }
