@@ -2,93 +2,208 @@
 
 **English** | [中文](README.zh-CN.md)
 
-A lightweight menu-bar clipboard history manager for macOS. Pure Swift and AppKit, with no third-party dependencies.
+<!--
+  IMAGE SLOTS — drop the Mac captures here, same filename, then both READMEs pick them up.
+  docs/hero.png              hero shot: menu-bar icon + history panel on a real desktop
+  docs/history-panel.png     history panel, list + bottom hint visible
+  docs/search.png            search, ideally a pinyin query matching Chinese text
+  docs/markdown-preview.png  side preview with Markdown and a highlighted code block
+  docs/paste-queue-hud.png   the floating paste-queue capsule
+  docs/preferences.png       the Preferences menu (menu-bar right-click or the gear)
+  docs/demo.gif              sequential paste: queue advances as each field is filled
+-->
 
-## Features
+<p align="center">
+  <img src="docs/hero.png" alt="ClipboardMate in the menu bar, history panel open" width="920">
+</p>
 
-- **Automatic capture**: records copied text, rich text (HTML/RTF), images, and Finder files in the background, deduplicates them, and sorts them by time
-- **Global shortcut**: press `⌘⇧V` in any app to show or hide the history panel (changeable in the menu to `⌥Space` / `⌥V` / `⌃⌥V`)
-- **Keyboard-first interaction**:
-    - The first item is selected when the panel opens
-    - Use `↓` / `↑` in the search field to move the selection. Separate keywords with spaces (AND)
-    - Press `Enter` to paste the selection, keeping HTML/RTF formatting when it exists
-    - **`⌥ Enter`**: paste as plain text. For images, paste the OCR text
-    - **`⌘C`**: copy to the clipboard only, without simulating a paste, so you can collect several items
-    - **`Space`**: toggle the side preview when the search field is empty; otherwise insert a space
-    - **`Delete`**: delete the selection when the search field is empty
-    - **`⌘O`**: open a link in the browser, or reveal a file in Finder
-    - **`Tab` / `⇧Tab`**: cycle the category tabs from the search field
-    - **`⌘S` / `⇧⌘S`**: start the paste queue (`⌘S` is FIFO, `⇧⌘S` is LIFO) and close the panel
-    - **`⌘A`**: select every item in the current list
-- **Paste queue**:
-  - **FIFO by default**: items leave the queue in the order they were copied. Copy a name, then a phone number, then an address, and they paste in that same order
-  - **Floating HUD**: a small frosted capsule at the bottom of the screen shows the next item (for example `▶ Alex`), the upcoming items, and the remaining count, without taking keyboard focus
-  - **`⌥⌘V`**: paste the next queued item into the target form
-  - **`⌥⌘Z`**: put the item you just pasted back at the front of the queue
-  - **Collect mode (`⌥⌘C`)**: each new copy joins the queue automatically, so you can fill a form without opening the panel
-- **Merge and paste a selection**:
-  - **`Enter`**: join the selected items with newlines and paste them
-  - **`⇧ Enter`**: join them with commas (`, `) and paste them
-  - The context menu also offers space-separated, concatenated, and plain-text merges
-- **Category filter**: All, Text, Images, Files, Links, and Pinned
-- **Sensitive-data filter**: ignores copies from password managers such as 1Password, Bitwarden, and the system password UI
-- **Window position**: open at the center of the screen or near the pointer. Centered is the default
-- **Haptic feedback**: a light tap when you paste or copy
-- **Native UI**: system vibrancy, `⌘1`–`⌘9` badges on the list, and rounded image thumbnails
-- **Thumbnail cache**: the list keeps downscaled previews so scrolling through many screenshots stays lighter
-- **Pinning**: pin frequent items from the context menu. History capacity applies to unpinned items and to pinned items past the limit
-- **Launch at login**: a menu-bar switch. Uses `SMAppService` first, then falls back to a login agent
-- **Capacity**: 50 / 100 / 200 / 500 items, default 200
-- **Persistence**: history is stored in `~/Library/Application Support/ClipboardMate/` and survives restarts. Each save keeps the previous file as a backup
+<p align="center">
+  <strong>Copy a name, a phone number, an address. Paste them into the form, one field at a time.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/lffzdd/ClipboardMate/releases/latest"><img src="https://img.shields.io/github/v/release/lffzdd/ClipboardMate?style=flat-square&label=release&color=007AFF" alt="Latest release"></a>
+  <a href="https://github.com/lffzdd/ClipboardMate/releases/latest"><img src="https://img.shields.io/badge/macOS-13%2B-111111?style=flat-square&logo=apple&logoColor=white" alt="macOS 13 or later"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/lffzdd/ClipboardMate?style=flat-square" alt="MIT License"></a>
+  <a href="https://github.com/lffzdd/ClipboardMate/releases/latest"><img src="https://img.shields.io/github/downloads/lffzdd/ClipboardMate/total?style=flat-square&color=34C759" alt="Downloads"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/lffzdd/ClipboardMate/releases/latest"><img src="https://img.shields.io/badge/Download-ClipboardMate.dmg-007AFF?style=for-the-badge&logo=apple&logoColor=white" alt="Download ClipboardMate.dmg"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/lffzdd/ClipboardMate/releases/latest">Get the latest ClipboardMate.dmg</a>
+  · menu-bar app · pure Swift · no account
+</p>
+
+ClipboardMate sits in the menu bar and keeps what you copy: plain text, HTML and RTF, images, and Finder files. Press <kbd>⌘⇧V</kbd> in any app, press Return, and it pastes back into the window you just left.
+
+The part you will actually feel is the paste queue. Copy the fields of a form in order, press <kbd>⌘S</kbd>, and a small frosted capsule appears at the bottom of the screen. It shows the next item and the ones waiting behind it, and it does not take keyboard focus. Each <kbd>⌘V</kbd> fills the next field.
+
+## Why ClipboardMate
+
+| Fill the form in order | Stay on the keyboard | Keep it on this Mac |
+| --- | --- | --- |
+| First copied, first pasted. The capsule shows what lands next, and <kbd>⌘Z</kbd> puts a mis-paste back at the front. | The first row is already selected. Return pastes it. <kbd>⌘1</kbd>–<kbd>⌘9</kbd> jump straight to a row. | Pure Swift and AppKit, no third-party libraries. History stays in Application Support. Copies from password managers are ignored. |
+
+## A look inside
+
+### History, one keystroke away
+
+<!-- image-slot: docs/history-panel.png — history panel -->
+
+<p align="center">
+  <img src="docs/history-panel.png" alt="History panel with categories, rows, and the paste hint" width="820">
+</p>
+
+Click the menu-bar icon, or press <kbd>⌘⇧V</kbd>. Text, images, files, links, and colors land in one list, newest first, with <kbd>⌘1</kbd>–<kbd>⌘9</kbd> on the first nine rows. Filter with **All · Text · Images · Files · Links · Pinned**. Pin the things you reuse. Give a row an alias with <kbd>⌘R</kbd> and search will find that name.
+
+### Search, including pinyin
+
+<!-- image-slot: docs/search.png — search, ideally pinyin -->
+
+<p align="center">
+  <img src="docs/search.png" alt="Search matching Chinese clipboard text by pinyin" width="820">
+</p>
+
+Type in the search field. Separate words with spaces and every word must match. Chinese text matches the characters, the full pinyin, and the initials — `zs` finds 张三. Long clips are matched within the first few thousand characters. <kbd>Esc</kbd> clears the query, then closes the panel.
+
+### Markdown and code, already rendered
+
+<!-- image-slot: docs/markdown-preview.png — markdown and code preview -->
+
+<p align="center">
+  <img src="docs/markdown-preview.png" alt="Side preview rendering Markdown and a highlighted code block" width="820">
+</p>
+
+<kbd>Space</kbd> opens the side preview when the search field is empty. Markdown can show as a preview or as the original text. Fenced code is highlighted, and a click copies that block. Images carry recognized text (Vision OCR); <kbd>⌥↵</kbd> pastes that text. Links open in the browser with <kbd>⌘O</kbd>. Files reveal in Finder. Hex colors get a swatch, plus copy as HEX, RGB, or HSL. Double-click an image for Quick Look.
+
+### The paste-queue capsule
+
+<!-- image-slot: docs/paste-queue-hud.png — floating paste-queue HUD -->
+
+<p align="center">
+  <img src="docs/paste-queue-hud.png" alt="Floating paste-queue capsule showing the next item" width="520">
+</p>
+
+<!-- image-slot: docs/demo.gif — sequential paste demo -->
+
+<p align="center">
+  <img src="docs/demo.gif" alt="A form filling as the paste queue advances" width="820">
+</p>
+
+Four moves:
+
+1. Copy the name, then the phone, then the address.
+2. Press <kbd>⌘S</kbd>. The panel closes. The capsule shows the next item, up to three waiting behind it, and how many are left. <kbd>⇧⌘S</kbd> reverses the order.
+3. Click the first field. <kbd>⌘V</kbd> pastes and the capsule advances. (The direct <kbd>⌘V</kbd> / <kbd>⌘Z</kbd> behavior is on by default while a queue is active. <kbd>⌥⌘V</kbd> and <kbd>⌥⌘Z</kbd> always work.)
+4. Pasted into the wrong field? <kbd>⌘Z</kbd> puts that item back at the front. <kbd>Esc</kbd>, or the ✕ on the capsule, clears the queue.
+
+**Collect mode** (<kbd>⌥⌘C</kbd>) is the same queue in reverse: each new copy joins automatically, so you can gather fields without opening the panel, then paste them in the form.
+
+Select several rows and Return joins them with newlines and pastes once. <kbd>⇧↵</kbd> joins them with commas. The context menu also offers spaces, no separator, or plain text.
+
+### Preferences
+
+<!-- image-slot: docs/preferences.png — Preferences menu -->
+
+<p align="center">
+  <img src="docs/preferences.png" alt="Preferences menu from the menu bar" width="420">
+</p>
+
+Right-click the menu-bar icon, or click the gear in the panel.
+
+| | |
+| --- | --- |
+| Shortcut | <kbd>⌘⇧V</kbd>, <kbd>⌥Space</kbd>, <kbd>⌥V</kbd>, or <kbd>⌃⌥V</kbd>. <kbd>⌘1</kbd>–<kbd>⌘9</kbd> can be turned off. |
+| Launch at login | On from the menu. Uses the system login item, and falls back to a login agent if macOS refuses. |
+| Panel | Keep the last search and category. Close when clicking outside, or when switching apps (immediately, or after a short delay). The pin beside search keeps this visit open. |
+| Look | Glass transparency. Open at the center of the screen, or near the pointer. Preview always on, compact, automatic, or wide. |
+| History | 50, 100, 200, or 500 items. The default is 200. Pinned rows are kept when you clear history. |
+| Language | Follow the system, Simplified Chinese, or English. |
+| Paste queue | FIFO, LIFO, or the list order. Show or hide the capsule. Let <kbd>⌘V</kbd> / <kbd>⌘Z</kbd> drive the queue. |
+| Privacy | Ignore copies from password managers (1Password, Bitwarden, LastPass, KeePassXC, Apple Passwords, and others) and concealed clipboard types. Exclude any other app by name. |
+| Storage | Image cache size, clean images older than 30 days, drop history rows whose files have gone missing. |
+
+Delete a row and the panel tells you. <kbd>⌘Z</kbd> puts it back. The same undo covers **Clear History**.
+
+## Shortcuts
+
+| | |
+| --- | --- |
+| <kbd>⌘⇧V</kbd> | Show or hide history. Changeable in Preferences. |
+| <kbd>↵</kbd> | Paste the selection. Several rows join with newlines. HTML and RTF are kept when the clip had them. |
+| <kbd>⇧↵</kbd> | Join the selection with commas and paste. |
+| <kbd>⌥↵</kbd> | Paste as plain text. On an image, paste the recognized text. |
+| <kbd>⌘C</kbd> | Copy to the clipboard only. |
+| <kbd>⌘1</kbd>–<kbd>⌘9</kbd> | Paste that row. |
+| <kbd>Space</kbd> | Toggle the preview when search is empty. Otherwise, type a space. |
+| <kbd>⌘O</kbd> | Open a link, or reveal a file in Finder. |
+| <kbd>⌘P</kbd> | Pin or unpin. |
+| <kbd>⌘R</kbd> | Rename / set an alias. |
+| <kbd>⌘S</kbd> / <kbd>⇧⌘S</kbd> | Start the paste queue, first-copied or last-copied first. |
+| <kbd>⌘A</kbd> | Select every row in the current list. |
+| <kbd>⌘Z</kbd> | Undo the last delete or clear, while the panel is open. |
+| <kbd>Delete</kbd> | Delete the selection when search is empty. |
+| <kbd>Tab</kbd> / <kbd>⇧Tab</kbd> | Cycle the category tabs. |
+| <kbd>↑</kbd> <kbd>↓</kbd> | Move the selection, including from the search field. |
+| <kbd>⌥⌘V</kbd> | Paste the next queued item. |
+| <kbd>⌥⌘Z</kbd> | Put the last pasted item back at the front of the queue. |
+| <kbd>⌥⌘C</kbd> | Turn collect mode on or off. |
+| <kbd>Esc</kbd> | Clear search, close the panel, or clear the queue. |
+
+The full list is also under **Keyboard Shortcuts…** in the menu bar.
+
+A few extras live on the row’s context menu: edit the text, format or minify JSON, change case (`camelCase`, `snake_case`, `kebab-case`, upper, lower), URL-encode, and Base64-encode.
 
 ## Install
 
-Download [ClipboardMate.dmg](https://github.com/lffzdd/ClipboardMate/releases/latest), open it, and drag ClipboardMate into Applications.
+1. Download [ClipboardMate.dmg](https://github.com/lffzdd/ClipboardMate/releases/latest).
+2. Open it and drag **ClipboardMate** into **Applications**.
+3. The disk image is ad-hoc signed and not notarized. The first launch, right-click the app and choose **Open**. macOS will say the developer cannot be verified — confirm **Open**. A clipboard icon then appears in the menu bar.
+4. Click the icon for history. Right-click it, or use the gear in the panel, for preferences. Or press <kbd>⌘⇧V</kbd> anywhere, choose a row, and press Return.
 
-The DMG is ad-hoc signed and not notarized. The first time you launch it, right-click the app and choose **Open**. macOS will say the developer cannot be verified; confirm Open. After that, a clipboard icon appears in the menu bar.
+### Let Return paste into the previous app
 
-**Click the icon** to open history. **Right-click the icon** (or use the gear in the panel) for settings. You can also press `⌘⇧V` in any app, choose an item, and press Return to paste.
+Browsing history needs no permission. Simulating <kbd>⌘V</kbd> needs Accessibility, once:
 
-### Allow pasting into the previous app (one-time)
+1. The first time you paste with Return, macOS asks.
+2. Open **System Settings → Privacy & Security → Accessibility** and turn **ClipboardMate** on.
+3. Return then pastes straight back. Without permission, or with **Auto-Paste on Enter** off, the app only writes the clipboard and you press <kbd>⌘V</kbd> yourself.
 
-Opening the panel and browsing history needs no permission. **Simulating ⌘V** needs Accessibility access:
-
-1. The first time you paste with Return, macOS asks for permission
-2. Open **System Settings → Privacy & Security → Accessibility** and turn **ClipboardMate** on
-3. Pasting then goes straight back to the previous app. Without permission, or with “Auto-paste on Enter” turned off, the app only writes the clipboard and you can press `⌘V` yourself
-
-`./build.sh` signs the app ad hoc. Rebuilding can drop the Accessibility grant. If Return stops pasting, turn ClipboardMate on again under **System Settings → Privacy & Security → Accessibility**. The menu bar also shows a “Grant Accessibility” item when that happens.
+Rebuilding with `./build.sh` signs the app ad hoc again, and macOS may drop the Accessibility grant. If Return stops pasting, turn ClipboardMate on again under Accessibility. The menu bar shows **Grant Accessibility to Auto-Paste…** when that happens. After an update, grant it once more.
 
 ## Build from source
 
-Requires macOS 13 or later.
+macOS 13 or later.
 
 ```bash
 git clone https://github.com/lffzdd/ClipboardMate.git
 cd ClipboardMate
-# Compile and install to /Applications/ClipboardMate.app
-./build.sh
-
-# Or build a DMG at build/ClipboardMate.dmg
-./package_dmg.sh
+./build.sh          # build and install to /Applications/ClipboardMate.app
+./package_dmg.sh    # or write build/ClipboardMate.dmg
 ```
 
 ## Layout
 
-- `Sources/ClipboardMate/main.swift` — entry point
-- `Sources/ClipboardMate/AppDelegate.swift` — menu bar, system events, and app lifecycle
-- `Sources/ClipboardMate/ClipboardStore.swift` — clipboard watching, storage, paste simulation, and the paste queue
-- `Sources/ClipboardMate/PanelController.swift` — history panel and its interactions
-- `Sources/ClipboardMate/QueueHUDWindowController.swift` — floating paste-queue capsule
-- `Sources/ClipboardMate/HotKey.swift` — global shortcuts through Carbon
-- `Sources/ClipboardMate/ClipItem.swift` — item model and serialization
-- `Sources/ClipboardMate/QuickLookManager.swift` — Quick Look previews
-- `Sources/ClipboardMate/SyntaxHighlighter.swift` — code highlighting
-- `Sources/ClipboardMate/MarkdownRenderer.swift` — Markdown preview
-- `Sources/ClipboardMate/Localization.swift` — interface strings
-- `Sources/ClipboardMate/PinyinHelper.swift` — pinyin and initial-letter search
-- `Sources/ClipboardMate/TextTransformer.swift` — case changes and text cleanup
+| | |
+| --- | --- |
+| `main.swift` | Entry point |
+| `AppDelegate.swift` | Menu bar, preferences, app lifecycle |
+| `ClipboardStore.swift` | Clipboard watching, storage, paste simulation, the queue |
+| `PanelController.swift` | History panel |
+| `QueueHUDWindowController.swift` | Floating paste-queue capsule |
+| `HotKey.swift` | Global shortcuts through Carbon |
+| `ClipItem.swift` | Item model |
+| `MarkdownRenderer.swift` / `SyntaxHighlighter.swift` | Markdown preview and code color |
+| `PinyinHelper.swift` | Pinyin and initial-letter search |
+| `TextTransformer.swift` | Case, JSON, URL, and Base64 transforms |
+| `QuickLookManager.swift` | Quick Look |
+| `Localization.swift` | English and Chinese strings |
+
+History is stored in `~/Library/Application Support/ClipboardMate/`. Each save keeps the previous file as a backup.
 
 ## License
 
-[MIT License](LICENSE) © 2026 lffzdd
+[MIT](LICENSE) © 2026 lffzdd

@@ -2,62 +2,177 @@
 
 [English](README.md) | **中文**
 
-一个为 macOS 打造的轻量剪贴板历史管理器（菜单栏应用），纯 Swift + AppKit 实现，无第三方依赖。
+<!--
+  图片位置 — 把 Mac 上截的图按同名文件放进来，中英文 README 会一起用上。
+  docs/hero.png              首屏：菜单栏图标 + 真实桌面上的历史面板
+  docs/history-panel.png     历史面板，列表和底部提示要看得见
+  docs/search.png            搜索，最好是拼音命中中文
+  docs/markdown-preview.png  侧边预览：Markdown 和带高亮的代码块
+  docs/paste-queue-hud.png   悬浮的填表队列胶囊
+  docs/preferences.png       偏好设置菜单（菜单栏右键，或面板里的齿轮）
+  docs/demo.gif              逐项粘贴：每贴一项，队列往前走一格
+-->
 
-## 功能
+<p align="center">
+  <img src="docs/hero.png" alt="菜单栏里的 ClipboardMate，历史面板已打开" width="920">
+</p>
 
-- **自动记录**：后台自动捕获复制的文本、富文本（HTML/RTF）、图片和访达文件，去重后按时间排列
-- **全局快捷键**：任意应用中按 `⌘⇧V` 呼出/隐藏历史面板（可在菜单中改为 `⌥Space` / `⌥V` / `⌃⌥V`）
-- **纯键盘流交互**：
-    - 呼出面板自动高亮选中第 1 项
-    - 搜索框中可直接按 `↓` / `↑` 切换选择条目；多个关键词用空格分隔（AND）
-    - 直接敲 `Enter`（回车）即可粘贴当前选中项（有 HTML/RTF 时保留原格式）
-    - **`⌥ Enter`（Option + 回车）**：**纯文本去格式粘贴**；图片则粘贴 OCR 识别出的文字
-    - **`⌘ C`**：**仅写入剪贴板**，不触发键盘模拟，方便连续备料收集
-    - **`Space`（空格键）**：搜索框为空时展开/收起侧边预览；搜索框有内容时输入空格分词
-    - **`Delete`**：搜索框为空时删除选中条目
-    - **`⌘ O`**：链接在浏览器中打开；文件在访达中显示
-    - **`Tab` / `⇧Tab`**：在搜索框中快速循环切换分类标签
-    - **`⌘ S` / `⇧⌘ S`**：**一键启动填表队列**（`⌘S` 为 FIFO 先复制先贴，`⇧⌘S` 为 LIFO 倒序），面板立即自动关闭
-    - **`⌘ A`**：全选当前列表所有条目
-- **填表队列（Sequential Paste Queue 进阶体验）**：
-  - **智能 FIFO 先入先出**：默认按条目实际复制的时间先后顺序出队，复制姓名 ➔ 电话 ➔ 地址，粘贴即按姓名 ➔ 电话 ➔ 地址输出
-  - **屏幕悬浮微型 HUD 胶囊**：启动后屏幕底部浮现毛玻璃胶囊窗口，实时高亮当前待粘贴项（`▶ 张三`）、排队队列与剩余进度，不夺取输入焦点
-  - **全局逐项粘贴 `⌥⌘V`**：在目标表单中按一次贴一项
-  - **队列容错回退 `⌥⌘Z`**：手滑按快或贴错位置时，一键把刚刚弹出的一项重新塞回队列头部
-  - **边复制边入队的「连续收集模式」`⌥⌘C`**：开启后，复制的每一段内容像“购物车加购”般自动入队，无需打开面板即可切到表单连续粘贴
-- **多选合并直接粘贴**：
-  - 选中多项后按 **`Enter`（回车）**：按换行符（`\n`）将选中的多条记录合并直接粘贴
-  - **`⇧ Enter`（Shift + 回车）**：按逗号分隔符（`, `）合并粘贴
-  - 右键支持换行、逗号、空格、紧凑拼接或纯文本合并等多种方式
-- **顶部分类筛选**：支持 `[全部]`、`[文本]`、`[图片]`、`[文件]`、`[链接]`、`[📌置顶]` 六大分类一键过滤
-- **安全防泄密保护**：自动忽略 1Password、Bitwarden、系统密码等密码管理器的敏感剪贴板数据
-- **屏幕居中 / 跟随鼠标**：可在菜单中自由切换弹出位置，默认推荐视野最舒适的屏幕正上方偏中位置
-- **触控板触觉反馈**：在执行粘贴或拷贝时，调用系统触觉引擎提供清脆干脆的物理确认感
-- **原生现代 UI**：采用系统级毛玻璃（`NSVisualEffectView`）半透明效果，列表带 `⌘1~⌘9` 快捷键徽标，图片带精致圆角
-- **缩略图缓存**：列表只缓存缩小后的预览图，大量截图滚动时更省内存
-- **置顶与管理**：右键条目可置顶常用内容；历史容量对未置顶和超额置顶条目一并生效
-- **开机自启动**：菜单栏内置开机启动开关（优先 `SMAppService`，失败时回退到 Login Agent）
-- **容量可调**：可在菜单栏自由切换历史保留条数（50 / 100 / 200 / 500 条，默认 200 条）
-- **持久化**：历史保存在 `~/Library/Application Support/ClipboardMate/`，重启不丢失；写入时保留上一份备份
+<p align="center">
+  <strong>姓名、电话、地址，按复制的顺序，一项一项贴进表单。</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/lffzdd/ClipboardMate/releases/latest"><img src="https://img.shields.io/github/v/release/lffzdd/ClipboardMate?style=flat-square&label=release&color=007AFF" alt="最新版本"></a>
+  <a href="https://github.com/lffzdd/ClipboardMate/releases/latest"><img src="https://img.shields.io/badge/macOS-13%2B-111111?style=flat-square&logo=apple&logoColor=white" alt="macOS 13 或更高"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/lffzdd/ClipboardMate?style=flat-square" alt="MIT 许可证"></a>
+  <a href="https://github.com/lffzdd/ClipboardMate/releases/latest"><img src="https://img.shields.io/github/downloads/lffzdd/ClipboardMate/total?style=flat-square&color=34C759" alt="下载量"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/lffzdd/ClipboardMate/releases/latest"><img src="https://img.shields.io/badge/下载-ClipboardMate.dmg-007AFF?style=for-the-badge&logo=apple&logoColor=white" alt="下载 ClipboardMate.dmg"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/lffzdd/ClipboardMate/releases/latest">下载最新的 ClipboardMate.dmg</a>
+  · 菜单栏应用 · 纯 Swift · 不用注册
+</p>
+
+ClipboardMate 住在菜单栏里。你复制的纯文本、HTML / RTF、图片和访达文件，它都会记下。在任意应用里按 <kbd>⌘⇧V</kbd>，回车，内容就贴回你刚才所在的窗口。
+
+真正会让你留下来的是填表队列。按表单顺序复制好每一项，按 <kbd>⌘S</kbd>，屏幕底部浮出一颗毛玻璃胶囊。它标出下一项，以及排在后面的几项，并且不抢走键盘。每按一次 <kbd>⌘V</kbd>，就填进下一个格子。
+
+## 为什么是 ClipboardMate
+
+| 按顺序填完一张表 | 手不用离开键盘 | 就在这台 Mac 上 |
+| --- | --- | --- |
+| 先复制的先贴。胶囊显示下一项；贴错了，<kbd>⌘Z</kbd> 把它塞回队列最前。 | 面板一打开，第一行已经选中。回车即贴。<kbd>⌘1</kbd>–<kbd>⌘9</kbd> 直接贴某一行。 | 纯 Swift 和 AppKit，没有第三方库。历史留在「应用程序支持」里。密码管理器里复制的内容会被跳过。 |
+
+## 看一眼
+
+### 一个快捷键，历史就在眼前
+
+<!-- image-slot: docs/history-panel.png — 历史面板 -->
+
+<p align="center">
+  <img src="docs/history-panel.png" alt="带分类、列表和底部粘贴提示的历史面板" width="820">
+</p>
+
+点菜单栏图标，或按 <kbd>⌘⇧V</kbd>。文本、图片、文件、链接和颜色排成一列，最新的在最上面，前九行标着 <kbd>⌘1</kbd>–<kbd>⌘9</kbd>。用 **全部 · 文本 · 图片 · 文件 · 链接 · 置顶** 过滤。常用的钉住。按 <kbd>⌘R</kbd> 起一个别名，之后用这个名字就能搜到。
+
+### 搜索，包括拼音
+
+<!-- image-slot: docs/search.png — 搜索，最好能看到拼音 -->
+
+<p align="center">
+  <img src="docs/search.png" alt="用拼音搜到中文剪贴板内容" width="820">
+</p>
+
+直接在搜索框里打。空格分开的每个词都要命中。中文可以按汉字、全拼或首字母匹配 —— 输入 `zs` 能找到「张三」。很长的内容，会在开头约四千字里匹配。<kbd>Esc</kbd> 先清掉搜索，再关面板。
+
+### Markdown 和代码，打开就是排好的
+
+<!-- image-slot: docs/markdown-preview.png — Markdown 与代码预览 -->
+
+<p align="center">
+  <img src="docs/markdown-preview.png" alt="侧边预览里的 Markdown 和带语法高亮的代码块" width="820">
+</p>
+
+搜索框是空的时候，按 <kbd>Space</kbd> 展开侧边预览。Markdown 可以看排版，也可以看原文。围栏里的代码会高亮，点一下就复制这一块。图片会做文字识别（Vision OCR），<kbd>⌥↵</kbd> 把识别出的字贴出去。链接用 <kbd>⌘O</kbd> 在浏览器打开。文件在访达里显示。十六进制颜色会画出色块，并能复制 HEX、RGB 或 HSL。图片双击进入快速查看。
+
+### 填表队列胶囊
+
+<!-- image-slot: docs/paste-queue-hud.png — 悬浮填表队列 -->
+
+<p align="center">
+  <img src="docs/paste-queue-hud.png" alt="显示下一项的悬浮填表队列胶囊" width="520">
+</p>
+
+<!-- image-slot: docs/demo.gif — 逐项粘贴演示 -->
+
+<p align="center">
+  <img src="docs/demo.gif" alt="表单随着填表队列逐项被填上" width="820">
+</p>
+
+四步：
+
+1. 先复制姓名，再复制电话，再复制地址。
+2. 按 <kbd>⌘S</kbd>。面板关掉。胶囊显示下一项、后面最多三条，以及还剩几项。<kbd>⇧⌘S</kbd> 则按相反的顺序出队。
+3. 点进第一个格子。<kbd>⌘V</kbd> 贴上，胶囊往前走一格。（队列进行时，默认可以直接用 <kbd>⌘V</kbd> / <kbd>⌘Z</kbd>。<kbd>⌥⌘V</kbd> 和 <kbd>⌥⌘Z</kbd> 始终可用。）
+4. 贴错格子了？<kbd>⌘Z</kbd> 把这一项放回队列最前。<kbd>Esc</kbd>，或胶囊上的 ✕，清空队列。
+
+**连续收集**（<kbd>⌥⌘C</kbd>）是同一条队列的另一种用法：之后每次复制都会自动入队。不用打开面板，先把字段收齐，再去表单里逐项贴。
+
+选中多行后按回车，会用换行把它们拼成一段再贴。<kbd>⇧↵</kbd> 则用逗号拼接。右键里还可以选空格、无缝拼接，或纯文本。
+
+### 偏好设置
+
+<!-- image-slot: docs/preferences.png — 偏好设置菜单 -->
+
+<p align="center">
+  <img src="docs/preferences.png" alt="从菜单栏打开的偏好设置" width="420">
+</p>
+
+右键菜单栏图标，或点面板里的齿轮。
+
+| | |
+| --- | --- |
+| 唤出快捷键 | <kbd>⌘⇧V</kbd>、<kbd>⌥Space</kbd>、<kbd>⌥V</kbd> 或 <kbd>⌃⌥V</kbd>。<kbd>⌘1</kbd>–<kbd>⌘9</kbd> 可以关掉。 |
+| 开机自启动 | 在菜单里打开。优先用系统登录项；若系统拒绝，则回退到 Login Agent。 |
+| 面板 | 再次打开时保留搜索和分类。点到面板外关闭，或切换应用时关闭（立刻，或延迟几秒）。搜索框旁的图钉让这一次保持打开。 |
+| 外观 | 玻璃透明度。在屏幕居中打开，或跟着指针。预览可以始终展开，宽度可选紧凑、自动或宽预览。 |
+| 历史容量 | 50、100、200 或 500 条，默认 200。清空历史时，已置顶的条目会留下。 |
+| 界面语言 | 跟随系统、简体中文或 English。 |
+| 填表队列 | 先复制先贴、后复制先贴，或按列表顺序。显示或隐藏胶囊。队列进行时是否让 <kbd>⌘V</kbd> / <kbd>⌘Z</kbd> 直接操作。 |
+| 隐私 | 忽略密码管理器里的复制（1Password、Bitwarden、LastPass、KeePassXC、苹果「密码」等）以及标记为隐藏的剪贴板类型。其他应用可以按名字排除。 |
+| 存储 | 查看图片缓存大小，清理 30 天前的图片，去掉文件已经不在的历史条目。 |
+
+删掉一行，面板会告诉你。<kbd>⌘Z</kbd> 可以恢复。**清空历史** 同样能撤销。
+
+## 快捷键
+
+| | |
+| --- | --- |
+| <kbd>⌘⇧V</kbd> | 显示或隐藏历史。可在偏好设置里更换。 |
+| <kbd>↵</kbd> | 粘贴选中项。多选时用换行合并。原来带 HTML / RTF 的会保留格式。 |
+| <kbd>⇧↵</kbd> | 用逗号合并后粘贴。 |
+| <kbd>⌥↵</kbd> | 作为纯文本粘贴。图片则粘贴识别出的文字。 |
+| <kbd>⌘C</kbd> | 只复制到剪贴板。 |
+| <kbd>⌘1</kbd>–<kbd>⌘9</kbd> | 粘贴对应的那一行。 |
+| <kbd>Space</kbd> | 搜索框为空时切换预览；有内容时就是输入空格。 |
+| <kbd>⌘O</kbd> | 打开链接，或在访达中显示文件。 |
+| <kbd>⌘P</kbd> | 置顶或取消置顶。 |
+| <kbd>⌘R</kbd> | 重命名 / 设置别名。 |
+| <kbd>⌘S</kbd> / <kbd>⇧⌘S</kbd> | 启动填表队列：先复制先贴，或后复制先贴。 |
+| <kbd>⌘A</kbd> | 全选当前列表。 |
+| <kbd>⌘Z</kbd> | 面板打开时，撤销上一次删除或清空。 |
+| <kbd>Delete</kbd> | 搜索框为空时删除选中项。 |
+| <kbd>Tab</kbd> / <kbd>⇧Tab</kbd> | 切换顶部分类。 |
+| <kbd>↑</kbd> <kbd>↓</kbd> | 移动选中项，在搜索框里也行。 |
+| <kbd>⌥⌘V</kbd> | 粘贴队列中的下一项。 |
+| <kbd>⌥⌘Z</kbd> | 把刚贴出的一项放回队列最前。 |
+| <kbd>⌥⌘C</kbd> | 打开或关闭连续收集。 |
+| <kbd>Esc</kbd> | 清除搜索、关闭面板，或清空队列。 |
+
+菜单栏里的 **快捷键说明…** 有同样一份清单。
+
+右键条目还可以：编辑文本、格式化或压缩 JSON、改大小写（`camelCase`、`snake_case`、`kebab-case`、全大写、全小写）、URL 编解码、Base64 编解码。
 
 ## 安装
 
-从 [Releases](https://github.com/lffzdd/ClipboardMate/releases/latest) 下载 `ClipboardMate.dmg`，打开后把 ClipboardMate 拖进「应用程序」。
+1. 下载 [ClipboardMate.dmg](https://github.com/lffzdd/ClipboardMate/releases/latest)。
+2. 打开，把 **ClipboardMate** 拖进「应用程序」。
+3. 这个磁盘映像是临时签名，没有公证。第一次打开时，请右键应用并选择**打开**。系统会提示无法验证开发者，确认**打开**即可。之后菜单栏会出现剪贴板图标。
+4. 点图标看历史。右键图标，或点面板里的齿轮，打开偏好设置。也可以在任意应用里按 <kbd>⌘⇧V</kbd>，选中一行，按回车。
 
-安装包是临时签名，没有公证。第一次打开时，请右键应用并选择**打开**。系统会提示无法验证开发者，确认打开即可。之后菜单栏会出现剪贴板图标。
+### 让回车直接贴回上一个应用
 
-**点击图标**呼出历史面板，**右键图标**（或面板齿轮）打开设置。也可以在任意应用中按 `⌘⇧V` 呼出历史面板，选择条目后按回车粘贴。
+浏览历史不需要任何权限。模拟 <kbd>⌘V</kbd> 需要一次辅助功能授权：
 
-### 授权「粘贴到原应用」（一次性设置）
+1. 第一次用回车粘贴时，系统会询问。
+2. 打开 **系统设置 → 隐私与安全性 → 辅助功能**，打开 **ClipboardMate**。
+3. 之后回车会直接贴回去。未授权，或关掉「回车自动粘贴」时，应用只写入剪贴板，你自己按 <kbd>⌘V</kbd> 即可。
 
-「呼出面板、浏览历史」无需任何权限；但**模拟 ⌘V 粘贴**需要辅助功能权限：
-
-1. 第一次用回车粘贴时，系统会自动弹出授权提示
-2. 打开 **系统设置 → 隐私与安全性 → 辅助功能**，把 **ClipboardMate** 打开
-3. 之后粘贴即可一步到位；未授权或关闭「回车自动粘贴」时，应用只把内容复制到剪贴板，你手动 `⌘V` 也可以
-
-`./build.sh` 使用临时签名。每次重新编译安装后，系统可能丢掉辅助功能授权。若回车粘贴突然失效，到 **系统设置 → 隐私与安全性 → 辅助功能** 里重新打开 ClipboardMate。菜单栏顶部也会出现「需要辅助功能权限」入口。
+`./build.sh` 会重新做临时签名，系统可能丢掉这项授权。如果回车突然不贴了，到辅助功能里把 ClipboardMate 再打开一次。出现这种情况时，菜单栏会显示 **需要辅助功能权限才能自动粘贴…**。更新版本之后，也需要重新授权一次。
 
 ## 从源码构建
 
@@ -66,29 +181,29 @@
 ```bash
 git clone https://github.com/lffzdd/ClipboardMate.git
 cd ClipboardMate
-# 编译并直接部署到本地 /Applications/ClipboardMate.app
-./build.sh
-
-# 或打包为 build/ClipboardMate.dmg
-./package_dmg.sh
+./build.sh          # 编译并安装到 /Applications/ClipboardMate.app
+./package_dmg.sh    # 或生成 build/ClipboardMate.dmg
 ```
 
 ## 文件结构
 
-- `Sources/ClipboardMate/main.swift` — 应用入口
-- `Sources/ClipboardMate/AppDelegate.swift` — 菜单栏、系统事件装配与生命周期管理
-- `Sources/ClipboardMate/ClipboardStore.swift` — 剪贴板监听、持久化存储、模拟粘贴与填表队列调度
-- `Sources/ClipboardMate/PanelController.swift` — 毛玻璃历史主面板与交互控制器
-- `Sources/ClipboardMate/QueueHUDWindowController.swift` — 填表队列屏幕悬浮微型 HUD 胶囊
-- `Sources/ClipboardMate/HotKey.swift` — Carbon 底层全局快捷键注册与监听
-- `Sources/ClipboardMate/ClipItem.swift` — 数据模型与格式序列化
-- `Sources/ClipboardMate/QuickLookManager.swift` — 原生 QuickLook 快速预览
-- `Sources/ClipboardMate/SyntaxHighlighter.swift` — 代码语法高亮引擎
-- `Sources/ClipboardMate/MarkdownRenderer.swift` — Markdown 格式预览渲染
-- `Sources/ClipboardMate/Localization.swift` — 多语言本地化支持
-- `Sources/ClipboardMate/PinyinHelper.swift` — 中文拼音及首字母搜索辅助
-- `Sources/ClipboardMate/TextTransformer.swift` — 大小写转换、格式清理等文本转换工具
+| | |
+| --- | --- |
+| `main.swift` | 入口 |
+| `AppDelegate.swift` | 菜单栏、偏好设置、生命周期 |
+| `ClipboardStore.swift` | 剪贴板监听、存储、模拟粘贴、填表队列 |
+| `PanelController.swift` | 历史面板 |
+| `QueueHUDWindowController.swift` | 悬浮填表队列胶囊 |
+| `HotKey.swift` | 通过 Carbon 注册全局快捷键 |
+| `ClipItem.swift` | 条目模型 |
+| `MarkdownRenderer.swift` / `SyntaxHighlighter.swift` | Markdown 预览与代码着色 |
+| `PinyinHelper.swift` | 拼音与首字母搜索 |
+| `TextTransformer.swift` | 大小写、JSON、URL、Base64 转换 |
+| `QuickLookManager.swift` | 快速查看 |
+| `Localization.swift` | 中英文字符串 |
 
-## License
+历史保存在 `~/Library/Application Support/ClipboardMate/`。每次写入都会留下上一份备份。
 
-[MIT License](LICENSE) © 2026 lffzdd
+## 许可证
+
+[MIT](LICENSE) © 2026 lffzdd
