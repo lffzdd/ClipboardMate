@@ -2,20 +2,7 @@
 
 **English** | [中文](README.zh-CN.md)
 
-<!--
-  IMAGE SLOTS — drop the Mac captures here, same filename, then both READMEs pick them up.
-  docs/hero.png              hero shot: menu-bar icon + history panel on a real desktop
-  docs/history-panel.png     history panel, list + bottom hint visible
-  docs/search.png            search, ideally a pinyin query matching Chinese text
-  docs/markdown-preview.png  side preview with Markdown and a highlighted code block
-  docs/paste-queue-hud.png   the floating paste-queue capsule
-  docs/preferences.png       the Preferences menu (menu-bar right-click or the gear)
-  docs/demo.gif              sequential paste: queue advances as each field is filled
--->
-
-<p align="center">
-  <img src="docs/hero.png" alt="ClipboardMate in the menu bar, history panel open" width="920">
-</p>
+<img src="docs/hero.png" alt="ClipboardMate in the menu bar, the history panel open, and the paste queue over a New Contact form" width="100%">
 
 <p align="center">
   <strong>Copy a name, a phone number, an address. Paste them into the form, one field at a time.</strong>
@@ -41,6 +28,14 @@ ClipboardMate sits in the menu bar and keeps what you copy: plain text, HTML and
 
 The part you will actually feel is the paste queue. Copy the fields of a form in order, press <kbd>⌘S</kbd>, and a small frosted capsule appears at the bottom of the screen. It shows the next item and the ones waiting behind it, and it does not take keyboard focus. Each <kbd>⌘V</kbd> fills the next field.
 
+<p align="center">
+  <img src="docs/demo.gif" alt="Sequential paste filling Name, Phone, Address, and City, from 1/4 to Paste queue finished" width="720">
+</p>
+
+<p align="center">
+  <sub>A New Contact form, filled in the order the fields were copied. The capsule counts <strong>1/4</strong> through <strong>4/4</strong> — Alex Chen, 138-0013-8000, 88 Market Street, San Francisco — and ends on <strong>Paste queue finished</strong>.</sub>
+</p>
+
 ## Why ClipboardMate
 
 | Fill the form in order | Stay on the keyboard | Keep it on this Mac |
@@ -49,49 +44,48 @@ The part you will actually feel is the paste queue. Copy the fields of a form in
 
 ## A look inside
 
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/history-panel.png" alt="History panel on All, with a link, an image, a color, a file, and notes" width="380"><br>
+      <sub><strong>History.</strong> All, with <kbd>⌘1</kbd>–<kbd>⌘9</kbd> on the first rows. A link, a screenshot, <code>#007AFF</code>, Design Notes.pdf, and a note that starts 发布说明.</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/search.png" alt="Search field fabu matching the clip 发布说明" width="380"><br>
+      <sub><strong>Pinyin search.</strong> <code>fabu</code> matches 发布 in 发布说明：ClipboardMate 1.2 已发布。</sub>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">
+      <img src="docs/markdown-preview.png" alt="Side preview rendering release notes and a highlighted Swift code block" width="880"><br>
+      <sub><strong>Markdown and code.</strong> Preview is on. The Swift sample is colored, and the block has its own Copy button. 312 characters, 14 lines.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/paste-queue-hud.png" alt="Paste Queue capsule at 1/4, next item Alex Chen" width="420"><br>
+      <sub><strong>Paste queue, 1/4.</strong> Next is 姓名 (Name) Alex Chen. Phone, address, and city are waiting. <kbd>⌘V</kbd> pastes, <kbd>⌘Z</kbd> undoes, <kbd>Esc</kbd> clears.</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/preferences.png" alt="Menu bar menu with Preferences open" width="420"><br>
+      <sub><strong>Preferences,</strong> from a right-click on the menu-bar icon. <kbd>⌘⇧V</kbd>, launch at login, screen center, 200 items, and auto-paste are on.</sub>
+    </td>
+  </tr>
+</table>
+
 ### History, one keystroke away
-
-<!-- image-slot: docs/history-panel.png — history panel -->
-
-<p align="center">
-  <img src="docs/history-panel.png" alt="History panel with categories, rows, and the paste hint" width="820">
-</p>
 
 Click the menu-bar icon, or press <kbd>⌘⇧V</kbd>. Text, images, files, links, and colors land in one list, newest first, with <kbd>⌘1</kbd>–<kbd>⌘9</kbd> on the first nine rows. Filter with **All · Text · Images · Files · Links · Pinned**. Pin the things you reuse. Give a row an alias with <kbd>⌘R</kbd> and search will find that name.
 
 ### Search, including pinyin
 
-<!-- image-slot: docs/search.png — search, ideally pinyin -->
-
-<p align="center">
-  <img src="docs/search.png" alt="Search matching Chinese clipboard text by pinyin" width="820">
-</p>
-
-Type in the search field. Separate words with spaces and every word must match. Chinese text matches the characters, the full pinyin, and the initials — `zs` finds 张三. Long clips are matched within the first few thousand characters. <kbd>Esc</kbd> clears the query, then closes the panel.
+Type in the search field. Separate words with spaces and every word must match. Chinese text matches the characters, the full pinyin, and the initials — `fabu` finds 发布. Long clips are matched within the first few thousand characters. <kbd>Esc</kbd> clears the query, then closes the panel.
 
 ### Markdown and code, already rendered
-
-<!-- image-slot: docs/markdown-preview.png — markdown and code preview -->
-
-<p align="center">
-  <img src="docs/markdown-preview.png" alt="Side preview rendering Markdown and a highlighted code block" width="820">
-</p>
 
 <kbd>Space</kbd> opens the side preview when the search field is empty. Markdown can show as a preview or as the original text. Fenced code is highlighted, and a click copies that block. Images carry recognized text (Vision OCR); <kbd>⌥↵</kbd> pastes that text. Links open in the browser with <kbd>⌘O</kbd>. Files reveal in Finder. Hex colors get a swatch, plus copy as HEX, RGB, or HSL. Double-click an image for Quick Look.
 
 ### The paste-queue capsule
-
-<!-- image-slot: docs/paste-queue-hud.png — floating paste-queue HUD -->
-
-<p align="center">
-  <img src="docs/paste-queue-hud.png" alt="Floating paste-queue capsule showing the next item" width="520">
-</p>
-
-<!-- image-slot: docs/demo.gif — sequential paste demo -->
-
-<p align="center">
-  <img src="docs/demo.gif" alt="A form filling as the paste queue advances" width="820">
-</p>
 
 Four moves:
 
@@ -106,13 +100,7 @@ Select several rows and Return joins them with newlines and pastes once. <kbd>�
 
 ### Preferences
 
-<!-- image-slot: docs/preferences.png — Preferences menu -->
-
-<p align="center">
-  <img src="docs/preferences.png" alt="Preferences menu from the menu bar" width="420">
-</p>
-
-Right-click the menu-bar icon, or click the gear in the panel.
+Right-click the menu-bar icon, or click the gear in the panel. The menu in the shot is the real one: shortcut <kbd>⌘⇧V</kbd>, launch at login, keep search and category, close on an outside click or an app switch (the delay shown is 0.6s), language following the system, screen center, 200 items, ignore password managers, and auto-paste on Enter.
 
 | | |
 | --- | --- |
