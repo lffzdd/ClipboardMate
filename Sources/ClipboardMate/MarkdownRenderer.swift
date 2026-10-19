@@ -25,7 +25,7 @@ final class RoundedCodeTextBlock: NSTextBlock {
     override func drawBackground(withFrame frameRect: NSRect, in controlView: NSView?, characterRange charRange: NSRange, layoutManager: NSLayoutManager) {
         let rect = frameRect.insetBy(dx: 0.5, dy: 0.5)
         guard rect.width > 2, rect.height > 2 else { return }
-        let path = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 12, yRadius: 12)
         fillColor(for: controlView).setFill()
         path.fill()
         NSColor.separatorColor.setStroke()
