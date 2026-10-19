@@ -15,3 +15,8 @@ build/
 DerivedData/
 *.xcuserstate
 xcuserdata/
+
+# Editor session logs and local index files
+.specstory/
+.cursorindexingignore
+.cursor/
