@@ -548,6 +548,8 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
 
     private var currentCategory: Category = .all
     private var lastShowDate = Date.distantPast
+    /// Frontmost app when the panel was shown; used to ignore duplicate activate events right after open.
+    private var frontAppBundleIDWhenShown: String?
     private let dateFormatter: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .abbreviated
@@ -1454,10 +1456,9 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
 
     private func applyPreviewAttributedText(_ attributed: NSAttributedString) {
         guard let storage = previewTextView.textStorage else { return }
+        storage.beginEditing()
+        defer { storage.endEditing() }
         storage.setAttributedString(attributed)
-        if let container = previewTextView.textContainer {
-            previewTextView.layoutManager?.ensureLayout(for: container)
-        }
 
         let font = (attributed.length > 0 ? attributed.attribute(.font, at: 0, effectiveRange: nil) as? NSFont : nil)
             ?? .systemFont(ofSize: 13)
@@ -1465,6 +1466,10 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             .font: font,
             .foregroundColor: NSColor.labelColor
         ]
+
+        if let container = previewTextView.textContainer {
+            previewTextView.layoutManager?.ensureLayout(for: container)
+        }
     }
 
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
@@ -1833,6 +1838,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
 
     func showPanel() {
         lastShowDate = Date()
+        frontAppBundleIDWhenShown = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let alwaysShow = UserDefaults.standard.bool(forKey: "alwaysShowPreview")
         let savedVisible = UserDefaults.standard.bool(forKey: "isPreviewVisible")
         isPreviewVisible = alwaysShow || savedVisible
@@ -1870,6 +1876,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         panelStayOpen = false
         updateStayOpenButton()
         persistPanelFilterState()
+        frontAppBundleIDWhenShown = nil
         panel.orderOut(nil)
     }
 
@@ -1895,11 +1902,15 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         guard Self.closePanelOnAppSwitch else { return }
         guard panel.isVisible else { return }
         guard NSApp.modalWindow == nil else { return }
-        guard Date().timeIntervalSince(lastShowDate) > Self.appSwitchCloseDelay else { return }
         let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-        if app?.bundleIdentifier != Bundle.main.bundleIdentifier {
-            hidePanel()
+        guard let bundleID = app?.bundleIdentifier else { return }
+        guard bundleID != Bundle.main.bundleIdentifier else { return }
+
+        let withinOpenDebounce = Date().timeIntervalSince(lastShowDate) <= Self.appSwitchCloseDelay
+        if withinOpenDebounce, bundleID == frontAppBundleIDWhenShown {
+            return
         }
+        hidePanel()
     }
 
     private func positionWindow() {
