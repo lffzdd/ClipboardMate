@@ -243,6 +243,125 @@ final class PanelRightResizeHandleView: NSView {
     }
 }
 
+final class PreviewTextView: NSTextView {
+    /// TextKit 1 lays out `NSTextBlock` / `NSTextTable`. The parameterless `NSTextView()` uses TextKit 2, which collapses those blocks.
+    static func makeTextKit1() -> PreviewTextView {
+        let storage = NSTextStorage()
+        let layoutManager = NSLayoutManager()
+        storage.addLayoutManager(layoutManager)
+        let container = NSTextContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
+        container.widthTracksTextView = true
+        container.heightTracksTextView = false
+        layoutManager.addTextContainer(container)
+        let view = PreviewTextView(frame: .zero, textContainer: container)
+        view.minSize = NSSize(width: 0, height: 0)
+        view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        view.isVerticallyResizable = true
+        view.isHorizontallyResizable = false
+        view.autoresizingMask = [.width]
+        return view
+    }
+
+    var onMarkdownCodeCopy: ((Int) -> Void)?
+    private var hoveredCopyRange: NSRange?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas where (area.userInfo?["mdCopy"] as? Bool) == true {
+            removeTrackingArea(area)
+        }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: ["mdCopy": true]
+        ))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        if let range = markdownCodeCopy(at: event)?.range {
+            NSCursor.pointingHand.set()
+            setCopyHover(true, range: range)
+        } else {
+            clearCopyHover()
+            super.mouseMoved(with: event)
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        clearCopyHover()
+        super.mouseExited(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if modifiers.isEmpty, let index = markdownCodeCopy(at: event)?.index {
+            onMarkdownCodeCopy?(index)
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func copy(_ sender: Any?) {
+        let range = selectedRange()
+        guard range.length > 0 else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(plainTextForCopy(in: range), forType: .string)
+    }
+
+    override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        let range = selectedRange()
+        guard range.length > 0 else { return false }
+        pboard.declareTypes([.string], owner: nil)
+        pboard.setString(plainTextForCopy(in: range), forType: .string)
+        return true
+    }
+
+    func plainTextForCopy(in range: NSRange? = nil) -> String {
+        guard let storage = textStorage else { return string }
+        let resolved = range ?? NSRange(location: 0, length: storage.length)
+        guard resolved.length > 0, NSMaxRange(resolved) <= storage.length else { return "" }
+        return storage.attributedSubstring(from: resolved).stringByRemovingMarkdownChrome()
+    }
+
+    private func markdownCodeCopy(at event: NSEvent) -> (index: Int, range: NSRange)? {
+        guard let storage = textStorage else { return nil }
+        let index = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
+        guard index >= 0, index < storage.length else { return nil }
+        var range = NSRange(location: 0, length: 0)
+        let value = storage.attribute(.markdownCodeCopyIndex, at: index, effectiveRange: &range)
+        let blockIndex: Int?
+        if let index = value as? Int {
+            blockIndex = index
+        } else if let number = value as? NSNumber {
+            blockIndex = number.intValue
+        } else {
+            blockIndex = nil
+        }
+        guard let blockIndex else { return nil }
+        return (blockIndex, range)
+    }
+
+    private func setCopyHover(_ hovering: Bool, range: NSRange) {
+        guard let storage = textStorage, NSMaxRange(range) <= storage.length else { return }
+        if hoveredCopyRange == range, hovering { return }
+        if let previous = hoveredCopyRange, previous != range, NSMaxRange(previous) <= storage.length {
+            storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: previous)
+        }
+        storage.addAttribute(
+            .foregroundColor,
+            value: hovering ? NSColor.labelColor : NSColor.secondaryLabelColor,
+            range: range
+        )
+        hoveredCopyRange = hovering ? range : nil
+    }
+
+    private func clearCopyHover() {
+        guard let range = hoveredCopyRange else { return }
+        setCopyHover(false, range: range)
+    }
+}
+
 final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegate, NSTableViewDelegate, NSTableViewDataSource, NSMenuDelegate, NSWindowDelegate, NSTextViewDelegate {
     enum Category: Int {
         case all = 0
@@ -256,6 +375,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
     private let store = ClipboardStore.shared
     private var panel: HistoryPanel!
     private var rootVisualEffect: NSVisualEffectView!
+    private var glassTintView: GlassTintView!
     private var leftContainer: NSView!
     private var searchField: NSSearchField!
     private var segmentedControl: NSSegmentedControl!
@@ -266,6 +386,97 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
     private var bottomHintLabel: NSTextField!
     private var displayItems: [ClipItem] = []
     private var currentSearchTokens: [String] = []
+    private var searchHaystackCache: [UUID: String] = [:]
+    private var searchReloadWorkItem: DispatchWorkItem?
+    private var showsDeleteUndoHint = false
+    private var searchFilterGeneration = 0
+    private let searchFilterQueue = DispatchQueue(label: "com.williamlao.clipboardmate.searchfilter", qos: .userInitiated)
+    private var lastDisplayItemIDs: [UUID] = []
+
+    private static let preservePanelFilterKey = "preservePanelFilterOnOpen"
+    private static let appSwitchCloseDelayKey = "panelAppSwitchCloseDelay"
+    private static let closeOnOutsideClickKey = "closePanelOnOutsideClick"
+    private static let closeOnAppSwitchKey = "closePanelOnAppSwitch"
+    private static let panelLastSearchKey = "panelLastSearch"
+    private static let panelLastCategoryKey = "panelLastCategory"
+
+    private static var preservePanelFilterOnOpen: Bool {
+        UserDefaults.standard.object(forKey: preservePanelFilterKey) as? Bool ?? true
+    }
+
+    private static var closePanelOnOutsideClick: Bool {
+        UserDefaults.standard.object(forKey: closeOnOutsideClickKey) as? Bool ?? true
+    }
+
+    private static var closePanelOnAppSwitch: Bool {
+        UserDefaults.standard.object(forKey: closeOnAppSwitchKey) as? Bool ?? true
+    }
+
+    static var appSwitchCloseDelay: TimeInterval {
+        let val = UserDefaults.standard.double(forKey: appSwitchCloseDelayKey)
+        if val == 0, UserDefaults.standard.object(forKey: appSwitchCloseDelayKey) == nil {
+            return 0.4
+        }
+        return val
+    }
+
+    private func persistPanelFilterState() {
+        UserDefaults.standard.set(searchField.stringValue, forKey: Self.panelLastSearchKey)
+        UserDefaults.standard.set(segmentedControl.selectedSegment, forKey: Self.panelLastCategoryKey)
+    }
+
+    /// 保留筛选重新打开时，若列表为空但历史仍在，自动恢复「全部」视图，避免误以为重启丢数据。
+    private func reconcileEmptyPanelAfterRestore() {
+        guard displayItems.isEmpty, !store.items.isEmpty else { return }
+
+        let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !query.isEmpty {
+            searchField.stringValue = ""
+            UserDefaults.standard.set("", forKey: Self.panelLastSearchKey)
+            segmentedControl.selectedSegment = 0
+            currentCategory = .all
+            UserDefaults.standard.set(0, forKey: Self.panelLastCategoryKey)
+            reload(preferTop: true)
+            flashActionHint(L10n.searchResetFlash(store.items.count))
+            return
+        }
+
+        if currentCategory != .all, baseItemsForCurrentCategory().isEmpty {
+            segmentedControl.selectedSegment = 0
+            currentCategory = .all
+            UserDefaults.standard.set(0, forKey: Self.panelLastCategoryKey)
+            reload(preferTop: true)
+            flashActionHint(L10n.searchResetFlash(store.items.count))
+        }
+    }
+
+    private func mergeableText(from item: ClipItem, includeFiles: Bool) -> String? {
+        switch item.kind {
+        case .text:
+            return item.text
+        case .image:
+            if store.isOCRPending(item) { return nil }
+            if let ocr = item.ocrText, !ocr.isEmpty { return ocr }
+            let w = item.width ?? 0
+            let h = item.height ?? 0
+            return L10n.imageMergePlaceholder(w: w, h: h)
+        case .file:
+            guard includeFiles, item.filePaths != nil else { return nil }
+            let existing = item.existingFilePaths
+            if existing.isEmpty { return nil }
+            return existing.joined(separator: "\n")
+        }
+    }
+
+    private func flashActionHint(_ message: String) {
+        bottomHintLabel.stringValue = message
+        if let appDelegate = NSApp.delegate as? AppDelegate {
+            appDelegate.flashStatusMessage(message, duration: 2.5)
+        }
+    }
+    private var previewBaseAttributedCache: NSAttributedString?
+    private var previewBaseCacheItemID: UUID?
+    private var previewBaseCacheMarkdownPreviewMode: Bool?
 
     // 侧边预览组件与分栏
     private var splitDivider: SplitDividerView!
@@ -276,7 +487,8 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
     private var quickLookButton: NSButton!
     private var previewLayoutButton: NSButton!
     private var imageFitButton: NSButton!
-    private var previewTextView: NSTextView!
+    private var previewTextView: PreviewTextView!
+    private var previewCodeBlocks: [String] = []
     private var markdownSegmentedControl: NSSegmentedControl!
     private var isMarkdownPreviewMode: Bool = true
     private var previewTextScrollView: NSScrollView!
@@ -350,6 +562,13 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         installEventMonitors()
         store.onChanged = { [weak self] in
             guard let self, self.panel.isVisible else { return }
+            self.invalidateSearchHaystackCache()
+            self.invalidatePreviewBaseCache()
+            self.reload()
+        }
+        store.onOCRUpdated = { [weak self] _ in
+            guard let self, self.panel.isVisible else { return }
+            self.invalidateSearchHaystackCache()
             self.reload()
         }
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -418,6 +637,24 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         rootVisualEffect.layer?.cornerRadius = 14
         rootVisualEffect.layer?.masksToBounds = true
         panel.contentView = rootVisualEffect
+        panel.alphaValue = 1
+
+        glassTintView = GlassTintView()
+        glassTintView.translatesAutoresizingMaskIntoConstraints = false
+        rootVisualEffect.addSubview(glassTintView)
+        NSLayoutConstraint.activate([
+            glassTintView.leadingAnchor.constraint(equalTo: rootVisualEffect.leadingAnchor),
+            glassTintView.trailingAnchor.constraint(equalTo: rootVisualEffect.trailingAnchor),
+            glassTintView.topAnchor.constraint(equalTo: rootVisualEffect.topAnchor),
+            glassTintView.bottomAnchor.constraint(equalTo: rootVisualEffect.bottomAnchor)
+        ])
+        applyStoredGlassTransparency()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(accessibilityDisplayOptionsChanged),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: NSWorkspace.shared
+        )
 
         // --- 左侧主体容器 ---
         leftContainer = NSView()
@@ -485,6 +722,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         pastePrimaryButton.font = .systemFont(ofSize: 11, weight: .semibold)
         pastePrimaryButton.contentTintColor = .controlAccentColor
         pastePrimaryButton.toolTip = L10n.pasteSelectedTooltip
+        pastePrimaryButton.setAccessibilityLabel(L10n.pasteSelectedTooltip)
         pastePrimaryButton.translatesAutoresizingMaskIntoConstraints = false
         bottomBar.addSubview(pastePrimaryButton)
 
@@ -726,7 +964,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         previewImageView.toolTip = L10n.doubleClickToZoom
         previewContainer.addSubview(previewImageView)
 
-        previewTextView = NSTextView()
+        previewTextView = PreviewTextView.makeTextKit1()
         previewTextView.delegate = self
         previewTextView.isEditable = false
         previewTextView.isSelectable = true
@@ -745,6 +983,9 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         previewTextView.isRichText = true
         previewTextView.importsGraphics = false
         previewTextView.enabledTextCheckingTypes = 0
+        previewTextView.onMarkdownCodeCopy = { [weak self] index in
+            self?.copyPreviewCodeBlock(at: index)
+        }
         previewTextView.typingAttributes = [
             .font: NSFont.systemFont(ofSize: 13),
             .foregroundColor: NSColor.labelColor
@@ -1157,7 +1398,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
     }
 
     @objc private func copyAllPreviewText() {
-        let str = previewTextView.string
+        let str = previewTextView.plainTextForCopy()
         guard !str.isEmpty else { return }
         ClipboardStore.shared.writeStringToPasteboard(str)
     }
@@ -1178,9 +1419,32 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         applyPreviewAttributedText(attributed)
     }
 
+    private func cacheAndApplyPreviewBase(_ base: NSAttributedString, itemID: UUID) {
+        previewBaseCacheItemID = itemID
+        previewBaseCacheMarkdownPreviewMode = isMarkdownPreviewMode
+        previewBaseAttributedCache = base
+        let highlighted = currentSearchTokens.isEmpty
+            ? base
+            : SyntaxHighlighter.highlightMatches(in: base, tokens: currentSearchTokens)
+        applyPreviewAttributedText(highlighted)
+    }
+
+    private func applyPreviewPlainTextCached(_ text: String, font: NSFont, itemID: UUID) {
+        let base = SyntaxHighlighter.highlightText(
+            text,
+            tokens: [],
+            baseFont: font,
+            baseColor: .labelColor
+        )
+        cacheAndApplyPreviewBase(base, itemID: itemID)
+    }
+
     private func applyPreviewAttributedText(_ attributed: NSAttributedString) {
         guard let storage = previewTextView.textStorage else { return }
         storage.setAttributedString(attributed)
+        if let container = previewTextView.textContainer {
+            previewTextView.layoutManager?.ensureLayout(for: container)
+        }
 
         let font = (attributed.length > 0 ? attributed.attribute(.font, at: 0, effectiveRange: nil) as? NSFont : nil)
             ?? .systemFont(ofSize: 13)
@@ -1199,6 +1463,12 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             return true
         }
         return false
+    }
+
+    private func copyPreviewCodeBlock(at index: Int) {
+        guard previewCodeBlocks.indices.contains(index) else { return }
+        ClipboardStore.shared.writeStringToPasteboard(previewCodeBlocks[index])
+        triggerHaptic()
     }
 
     private func setupContextMenu(for table: NSTableView) {
@@ -1286,6 +1556,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
 
         let copyOnly = NSMenuItem(title: L10n.copyOnly, action: #selector(copySelectedOnly), keyEquivalent: "")
         copyOnly.target = self
+        copyOnly.toolTip = L10n.copyPanelTooltip
         menu.addItem(copyOnly)
 
         if item.isURL {
@@ -1389,6 +1660,12 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         let pin = NSMenuItem(title: L10n.pinToggle, action: #selector(togglePinRow), keyEquivalent: "")
         pin.target = self
         menu.addItem(pin)
+
+        if item.kind == .text {
+            let editText = NSMenuItem(title: L10n.editTextContent, action: #selector(promptEditText), keyEquivalent: "")
+            editText.target = self
+            menu.addItem(editText)
+        }
 
         let alias = NSMenuItem(title: L10n.setAlias, action: #selector(promptSetAlias), keyEquivalent: "")
         alias.target = self
@@ -1499,6 +1776,21 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
                 return nil
             }
 
+            // Cmd + Z：撤销删除（搜索框无内容时；不与搜索框内撤销冲突）
+            if event.keyCode == 6 && event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift) {
+                if let editor = self.searchField.currentEditor(), !editor.string.isEmpty {
+                    return event
+                }
+                if self.store.undoLastDelete() {
+                    self.showsDeleteUndoHint = false
+                    self.reload()
+                    if let appDelegate = NSApp.delegate as? AppDelegate {
+                        appDelegate.flashStatusMessage(L10n.deleteUndoSuccess)
+                    }
+                    return nil
+                }
+            }
+
             // Cmd+1..9 快速粘贴前 9 项
             if event.modifierFlags.contains(.command),
                let chars = event.charactersIgnoringModifiers,
@@ -1514,6 +1806,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             return event
         }
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
+            guard Self.closePanelOnOutsideClick else { return }
             self?.hidePanel()
         }
     }
@@ -1531,10 +1824,24 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         isPreviewVisible = alwaysShow || savedVisible
         updateLayoutForPreviewState(animated: false)
 
-        searchField.stringValue = ""
-        segmentedControl.selectedSegment = 0
-        currentCategory = .all
-        reload(preferTop: true)
+        if Self.preservePanelFilterOnOpen {
+            searchField.stringValue = UserDefaults.standard.string(forKey: Self.panelLastSearchKey) ?? ""
+            let catIndex = UserDefaults.standard.integer(forKey: Self.panelLastCategoryKey)
+            if catIndex >= 0, catIndex < segmentedControl.segmentCount {
+                segmentedControl.selectedSegment = catIndex
+                currentCategory = Category(rawValue: catIndex) ?? .all
+            } else {
+                segmentedControl.selectedSegment = 0
+                currentCategory = .all
+            }
+            reload(preferTop: searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            reconcileEmptyPanelAfterRestore()
+        } else {
+            searchField.stringValue = ""
+            segmentedControl.selectedSegment = 0
+            currentCategory = .all
+            reload(preferTop: true)
+        }
         if isPreviewVisible, currentPreviewLayoutMode() == "automatic" {
             setPreviewWidth(smartPreviewWidth(), resetLeft: false)
         }
@@ -1546,13 +1853,15 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
     func hidePanel() {
         guard panel.isVisible else { return }
         if NSApp.modalWindow != nil { return }
+        persistPanelFilterState()
         panel.orderOut(nil)
     }
 
     @objc private func frontAppChanged(_ notification: Notification) {
+        guard Self.closePanelOnAppSwitch else { return }
         guard panel.isVisible else { return }
         guard NSApp.modalWindow == nil else { return }
-        guard Date().timeIntervalSince(lastShowDate) > 0.4 else { return }
+        guard Date().timeIntervalSince(lastShowDate) > Self.appSwitchCloseDelay else { return }
         let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
         if app?.bundleIdentifier != Bundle.main.bundleIdentifier {
             hidePanel()
@@ -1809,6 +2118,28 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
     }
 
+    static let panelGlassTransparencyKey = "panelGlassTransparency"
+
+    /// 1 是不加罩的毛玻璃，0 是实色罩。文字不跟着变淡。
+    static var storedGlassTransparency: CGFloat {
+        let raw = UserDefaults.standard.object(forKey: panelGlassTransparencyKey) as? Double ?? 1
+        return CGFloat(min(1, max(0, raw)))
+    }
+
+    static var reducesTransparency: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+    }
+
+    func applyStoredGlassTransparency() {
+        panel.alphaValue = 1
+        let transparency = Self.reducesTransparency ? 0 : Self.storedGlassTransparency
+        glassTintView.cover = 1 - transparency
+    }
+
+    @objc private func accessibilityDisplayOptionsChanged() {
+        applyStoredGlassTransparency()
+    }
+
     func applyAlwaysShowPreview(_ alwaysShow: Bool) {
         if alwaysShow != isPreviewVisible {
             togglePreview()
@@ -1887,11 +2218,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             let selectedItems = selectedRows.compactMap { row -> ClipItem? in
                 row < displayItems.count ? displayItems[row] : nil
             }
-            let texts = selectedItems.compactMap { item -> String? in
-                if item.kind == .text { return item.text }
-                if let ocr = item.ocrText, !ocr.isEmpty { return ocr }
-                return nil
-            }
+            let texts = selectedItems.compactMap { mergeableText(from: $0, includeFiles: true) }
             let merged = texts.joined(separator: "\n")
             previewHeader.stringValue = L10n.mergePreviewTitle
             previewMetaLabel.stringValue = L10n.mergePreviewMeta(selectedRows.count)
@@ -1935,6 +2262,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         let appPart = item.sourceAppName.map { "\(L10n.sourceFrom)\($0) • " } ?? ""
 
         if item.kind == .image {
+            store.requestOCRIfNeeded(for: item)
             let w = item.width ?? 0
             let h = item.height ?? 0
             previewHeader.stringValue = item.displayTitle
@@ -1953,11 +2281,25 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             imageFitButton.isHidden = false
             previewTextBottomBar.isHidden = true
 
-            if let ocr = item.ocrText, !ocr.isEmpty {
+            if store.isOCRPending(item) {
+                ocrTextView.string = L10n.ocrRecognizing
+                ocrSectionView.isHidden = false
+                isOCRFolded = false
+                applyOCRFoldLayout(animated: false)
+                previewImageBottomToContainerConstraint?.isActive = false
+                previewImageBottomToSectionConstraint?.isActive = true
+            } else if let ocr = item.ocrText, !ocr.isEmpty {
                 ocrTextView.string = ocr
                 ocrSectionView.isHidden = false
                 // 新条目的 OCR 默认折叠；同一条目在用户展开后刷新时保持展开。
                 isOCRFolded = (expandedOCRItemID != item.id)
+                applyOCRFoldLayout(animated: false)
+                previewImageBottomToContainerConstraint?.isActive = false
+                previewImageBottomToSectionConstraint?.isActive = true
+            } else if item.ocrText != nil {
+                ocrTextView.string = L10n.ocrNoText
+                ocrSectionView.isHidden = false
+                isOCRFolded = false
                 applyOCRFoldLayout(animated: false)
                 previewImageBottomToContainerConstraint?.isActive = false
                 previewImageBottomToSectionConstraint?.isActive = true
@@ -2002,13 +2344,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             previewTextTopToDividerConstraint?.isActive = false
             previewTextTopToURLConstraint?.isActive = true
             let urlText = item.text ?? ""
-            if !currentSearchTokens.isEmpty {
-                applyPreviewAttributedText(
-                    SyntaxHighlighter.highlightText(urlText, tokens: currentSearchTokens, baseFont: .systemFont(ofSize: 13), baseColor: .labelColor)
-                )
-            } else {
-                applyPreviewPlainText(urlText, font: .systemFont(ofSize: 13))
-            }
+            applyPreviewPlainTextCached(urlText, font: .systemFont(ofSize: 13), itemID: item.id)
             previewTextScrollView.isHidden = false
             previewTextBottomBar.isHidden = false
             previewTextMetaLabel.stringValue = L10n.textCountInfo(chars: urlText.count, lines: 1)
@@ -2026,13 +2362,11 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             previewTextTopToDividerConstraint?.isActive = true
 
             let pathsText = item.filePaths?.joined(separator: "\n") ?? ""
-            if !currentSearchTokens.isEmpty {
-                applyPreviewAttributedText(
-                    SyntaxHighlighter.highlightText(pathsText, tokens: currentSearchTokens, baseFont: .monospacedSystemFont(ofSize: 12, weight: .regular), baseColor: .labelColor)
-                )
-            } else {
-                applyPreviewPlainText(pathsText, font: .monospacedSystemFont(ofSize: 12, weight: .regular))
-            }
+            applyPreviewPlainTextCached(
+                pathsText,
+                font: .monospacedSystemFont(ofSize: 12, weight: .regular),
+                itemID: item.id
+            )
             previewTextScrollView.isHidden = false
             previewTextBottomBar.isHidden = false
             previewTextMetaLabel.stringValue = L10n.fileItemsCount(item.fileCount)
@@ -2071,20 +2405,26 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
                 markdownSegmentedControl.selectedSegment = desiredSegment
             }
 
+            previewCodeBlocks = []
             if isMarkdown && isMarkdownPreviewMode {
                 let rendered = MarkdownRenderer.render(displayText, baseFontSize: 13)
-                applyPreviewAttributedText(SyntaxHighlighter.highlightMatches(in: rendered, tokens: currentSearchTokens))
+                previewCodeBlocks = rendered.codeBlocks
+                cacheAndApplyPreviewBase(rendered.text, itemID: item.id)
             } else if isMarkdown {
                 // Raw：必须整段替换成无链接、无旧色的纯文本，否则会残留 Preview 里的红色/粉色代码色。
-                applyPreviewPlainText(displayText, font: .monospacedSystemFont(ofSize: 12, weight: .regular), searchTokens: currentSearchTokens)
+                applyPreviewPlainTextCached(
+                    displayText,
+                    font: .monospacedSystemFont(ofSize: 12, weight: .regular),
+                    itemID: item.id
+                )
             } else if let lang = detectedLang {
                 let highlighted = SyntaxHighlighter.highlight(code: displayText, language: lang, fontSize: 12)
-                applyPreviewAttributedText(SyntaxHighlighter.highlightMatches(in: highlighted, tokens: currentSearchTokens))
+                cacheAndApplyPreviewBase(highlighted, itemID: item.id)
             } else {
                 let font: NSFont = displayText.contains("\n")
                     ? .monospacedSystemFont(ofSize: 12, weight: .regular)
                     : .systemFont(ofSize: 13)
-                applyPreviewPlainText(displayText, font: font, searchTokens: currentSearchTokens)
+                applyPreviewPlainTextCached(displayText, font: font, itemID: item.id)
             }
 
             var typeName = detectedLang?.displayName ?? L10n.typePlainText
@@ -2093,7 +2433,11 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             }
             let cCount = rawText.count
             let lCount = rawText.components(separatedBy: "\n").count
-            previewMetaLabel.stringValue = "\(appPart)\(time) • \(typeName)"
+            var meta = "\(appPart)\(time) • \(typeName)"
+            if item.richFormatDropped {
+                meta += " • " + L10n.richFormatDroppedShort
+            }
+            previewMetaLabel.stringValue = meta
             previewTextMetaLabel.stringValue = L10n.textCountInfo(chars: cCount, lines: lCount)
             previewTextBottomBar.isHidden = false
             previewTextScrollView.isHidden = false
@@ -2135,15 +2479,31 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
 
     // MARK: - 数据检索与列表联动
 
-    private func reload(preferTop: Bool = false) {
-        let previousIDs: [UUID] = tableView.selectedRowIndexes.sorted().compactMap { idx in
-            (idx >= 0 && idx < displayItems.count) ? displayItems[idx].id : nil
+    private func invalidateSearchHaystackCache() {
+        searchHaystackCache.removeAll(keepingCapacity: true)
+    }
+
+    private func cachedSearchHaystack(for item: ClipItem) -> String {
+        if let cached = searchHaystackCache[item.id] {
+            return cached
         }
+        let haystack = item.searchHaystack()
+        searchHaystackCache[item.id] = haystack
+        return haystack
+    }
 
-        let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let tokens = query.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
-        currentSearchTokens = tokens
+    private func invalidatePreviewBaseCache() {
+        previewBaseAttributedCache = nil
+        previewBaseCacheItemID = nil
+        previewBaseCacheMarkdownPreviewMode = nil
+    }
 
+    private func itemMatchesSearch(_ item: ClipItem, tokens: [String]) -> Bool {
+        _ = cachedSearchHaystack(for: item)
+        return item.matchesSearchTokens(tokens)
+    }
+
+    private func baseItemsForCurrentCategory() -> [ClipItem] {
         var baseItems = store.items
         switch currentCategory {
         case .all:
@@ -2159,50 +2519,90 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         case .pinned:
             baseItems = baseItems.filter { $0.pinned }
         }
+        return baseItems
+    }
 
-        if tokens.isEmpty {
-            displayItems = baseItems
-        } else {
-            displayItems = baseItems.filter { item in
-                for token in tokens {
-                    var matched = false
-                    if let alias = item.alias, PinyinHelper.matches(text: alias, token: token) {
-                        matched = true
-                    } else if let appName = item.sourceAppName, PinyinHelper.matches(text: appName, token: token) {
-                        matched = true
-                    } else {
-                        switch item.kind {
-                        case .text:
-                            if let text = item.text, PinyinHelper.matches(text: text, token: token) {
-                                matched = true
-                            }
-                        case .image:
-                            let desc = "\(L10n.imageLabel) image \(item.width ?? 0)x\(item.height ?? 0)"
-                            if desc.lowercased().contains(token.lowercased()) {
-                                matched = true
-                            } else if let ocr = item.ocrText, PinyinHelper.matches(text: ocr, token: token) {
-                                matched = true
-                            }
-                        case .file:
-                            if let paths = item.filePaths {
-                                for path in paths {
-                                    let fileName = URL(fileURLWithPath: path).lastPathComponent
-                                    if PinyinHelper.matches(text: fileName, token: token) || path.lowercased().contains(token.lowercased()) {
-                                        matched = true
-                                        break
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if !matched {
-                        return false
-                    }
-                }
-                return true
+    private func reloadVisibleTableRows() {
+        guard !displayItems.isEmpty else {
+            tableView.reloadData()
+            return
+        }
+        let visible = tableView.rows(in: tableView.visibleRect)
+        var rows = IndexSet()
+        for row in visible.location..<(visible.location + visible.length) {
+            if row >= 0, row < displayItems.count {
+                rows.insert(row)
             }
         }
-        tableView.reloadData()
+        if rows.isEmpty {
+            rows.insert(0)
+        }
+        tableView.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: 0))
+    }
+
+    private func setSearchFilteringPending(_ pending: Bool) {
+        if pending, !searchField.stringValue.isEmpty {
+            searchField.toolTip = L10n.searchFiltering
+        } else if searchField.toolTip == L10n.searchFiltering {
+            searchField.toolTip = nil
+        }
+    }
+
+    private func refreshPreviewSearchHighlightsOnly() -> Bool {
+        guard isPreviewVisible,
+              tableView.selectedRowIndexes.count == 1,
+              let row = tableView.selectedRowIndexes.first,
+              row >= 0, row < displayItems.count,
+              let base = previewBaseAttributedCache,
+              let cacheItemID = previewBaseCacheItemID,
+              previewBaseCacheMarkdownPreviewMode == isMarkdownPreviewMode else {
+            return false
+        }
+        let item = displayItems[row]
+        guard item.id == cacheItemID else { return false }
+
+        let highlighted = currentSearchTokens.isEmpty
+            ? base
+            : SyntaxHighlighter.highlightMatches(in: base, tokens: currentSearchTokens)
+        applyPreviewAttributedText(highlighted)
+        return true
+    }
+
+    private func reload(preferTop: Bool = false, previewHighlightsOnly: Bool = false) {
+        searchFilterGeneration += 1
+        setSearchFilteringPending(false)
+        let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tokens = query.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        currentSearchTokens = tokens
+        let baseItems = baseItemsForCurrentCategory()
+        let filtered: [ClipItem]
+        if tokens.isEmpty {
+            filtered = baseItems
+        } else {
+            filtered = baseItems.filter { $0.matchesSearchTokens(tokens) }
+        }
+        applyFilterResults(filtered, query: query, preferTop: preferTop, previewHighlightsOnly: previewHighlightsOnly)
+    }
+
+    private func applyFilterResults(
+        _ filtered: [ClipItem],
+        query: String,
+        preferTop: Bool,
+        previewHighlightsOnly: Bool
+    ) {
+        let previousIDs: [UUID] = tableView.selectedRowIndexes.sorted().compactMap { idx in
+            (idx >= 0 && idx < displayItems.count) ? displayItems[idx].id : nil
+        }
+        let oldDisplayIDs = displayItems.map(\.id)
+        displayItems = filtered
+        lastDisplayItemIDs = filtered.map(\.id)
+
+        let idsUnchanged = oldDisplayIDs == lastDisplayItemIDs
+        if previewHighlightsOnly, idsUnchanged {
+            reloadVisibleTableRows()
+        } else {
+            tableView.reloadData()
+        }
 
         var newSelection = IndexSet()
         if !preferTop {
@@ -2222,16 +2622,74 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             }
         }
 
-        emptyLabel.stringValue = query.isEmpty
-            ? (currentCategory == .all ? L10n.emptyHistory : L10n.emptyCategory)
-            : L10n.emptySearch
+        if displayItems.isEmpty, !store.items.isEmpty, !query.isEmpty {
+            emptyLabel.stringValue = L10n.emptyFilteredHint(store.items.count)
+        } else {
+            emptyLabel.stringValue = query.isEmpty
+                ? (currentCategory == .all ? L10n.emptyHistory : L10n.emptyCategory)
+                : L10n.emptySearch
+        }
         emptyLabel.isHidden = !displayItems.isEmpty
+        if previewHighlightsOnly, refreshPreviewSearchHighlightsOnly() {
+            updateBottomHint()
+            return
+        }
+        if !previewHighlightsOnly {
+            invalidatePreviewBaseCache()
+        }
         updatePreview()
         updateBottomHint()
     }
 
+    private func scheduleSearchReload() {
+        searchReloadWorkItem?.cancel()
+        setSearchFilteringPending(true)
+        let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tokens = query.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        let baseItems = baseItemsForCurrentCategory()
+        let useBackground = store.items.count >= 80 && !tokens.isEmpty
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            if useBackground {
+                let generation = self.searchFilterGeneration + 1
+                self.searchFilterGeneration = generation
+                self.searchFilterQueue.async { [weak self] in
+                    guard let self else { return }
+                    let filtered = baseItems.filter { $0.matchesSearchTokens(tokens) }
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, generation == self.searchFilterGeneration else { return }
+                        self.currentSearchTokens = tokens
+                        self.setSearchFilteringPending(false)
+                        self.applyFilterResults(filtered, query: query, preferTop: false, previewHighlightsOnly: true)
+                    }
+                }
+            } else {
+                self.reload(previewHighlightsOnly: true)
+                self.setSearchFilteringPending(false)
+            }
+        }
+        searchReloadWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)
+    }
+
+    /// 粘贴 / 回车前强制与搜索框同步，避免防抖导致贴错条目。
+    func flushPendingSearchReload() {
+        searchReloadWorkItem?.cancel()
+        searchReloadWorkItem = nil
+        searchFilterGeneration += 1
+        setSearchFilteringPending(false)
+        reload(previewHighlightsOnly: false)
+    }
+
     private func updateBottomHint() {
         guard bottomHintLabel != nil else { return }
+        if showsDeleteUndoHint, store.canUndoDelete {
+            bottomHintLabel.stringValue = L10n.bottomHintDeleteUndo
+            pastePrimaryButton.title = L10n.primaryPaste
+            return
+        }
+        showsDeleteUndoHint = false
         let count = tableView.selectedRowIndexes.count
         if count > 1 {
             bottomHintLabel.stringValue = L10n.bottomHintMultiSelected(count)
@@ -2247,8 +2705,15 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         updateBottomHint()
     }
 
-    func controlTextDidChange(_ obj: Notification) {
+    func handleUndoDeleteDidRestore() {
+        guard panel.isVisible else { return }
+        showsDeleteUndoHint = false
+        invalidateSearchHaystackCache()
         reload()
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        scheduleSearchReload()
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -2298,6 +2763,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        invalidatePreviewBaseCache()
         updatePreview()
         updateBottomHint()
     }
@@ -2345,9 +2811,15 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
                     main.stringValue = imgTitle
                     main.font = .systemFont(ofSize: 13, weight: .regular)
                 }
-                if let ocr = item.ocrText, !ocr.isEmpty {
+                if store.isOCRPending(item) {
+                    sub.stringValue = pinPrefix + L10n.ocrRecognizing + " • " + time + appSuffix
+                    cell.toolTip = nil
+                } else if let ocr = item.ocrText, !ocr.isEmpty {
                     sub.stringValue = pinPrefix + "OCR • " + time + appSuffix
                     cell.toolTip = ocr
+                } else if item.ocrText != nil {
+                    sub.stringValue = pinPrefix + L10n.ocrNoText + " • " + time + appSuffix
+                    cell.toolTip = nil
                 } else {
                     sub.stringValue = pinPrefix + "\(L10n.typeImage) • " + time + appSuffix
                     cell.toolTip = nil
@@ -2414,7 +2886,11 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
                     main.stringValue = rawTitle
                     main.font = .systemFont(ofSize: 13, weight: .regular)
                 }
-                sub.stringValue = pinPrefix + time + appSuffix
+                var subLine = pinPrefix + time + appSuffix
+                if item.richFormatDropped {
+                    subLine += " • " + L10n.richFormatDroppedShort
+                }
+                sub.stringValue = subLine
                 cell.toolTip = nil
             }
 
@@ -2583,6 +3059,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
     }
 
     func activateRow(_ row: Int, plainTextOnly: Bool = false) {
+        flushPendingSearchReload()
         guard row >= 0, row < displayItems.count else { return }
         let item = displayItems[row]
         hidePanel()
@@ -2621,20 +3098,17 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
     }
 
     @objc private func activateSelected(plainTextOnly: Bool = false, separator: String = "\n") {
+        flushPendingSearchReload()
         let selectedRows = tableView.selectedRowIndexes.sorted()
         if selectedRows.count > 1 {
             // 合并多选粘贴
             let selectedItems = selectedRows.compactMap { row -> ClipItem? in
                 row < displayItems.count ? displayItems[row] : nil
             }
-            let texts = selectedItems.compactMap { item -> String? in
-                if item.kind == .text { return item.text }
-                if let ocr = item.ocrText, !ocr.isEmpty { return ocr }
-                if item.kind == .file, let paths = item.filePaths { return paths.joined(separator: "\n") }
-                return nil
-            }
+            let texts = selectedItems.compactMap { mergeableText(from: $0, includeFiles: true) }
             guard !texts.isEmpty else {
                 NSSound.beep()
+                flashActionHint(L10n.mergeNoPasteableContent)
                 return
             }
             let merged = texts.joined(separator: separator)
@@ -2661,11 +3135,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             let selectedItems = selectedRows.compactMap { row -> ClipItem? in
                 row < displayItems.count ? displayItems[row] : nil
             }
-            let texts = selectedItems.compactMap { item -> String? in
-                if item.kind == .text { return item.text }
-                if let ocr = item.ocrText, !ocr.isEmpty { return ocr }
-                return nil
-            }
+            let texts = selectedItems.compactMap { mergeableText(from: $0, includeFiles: true) }
             if !texts.isEmpty {
                 let merged = texts.joined(separator: "\n")
                 ClipboardStore.shared.writeStringToPasteboard(merged)
@@ -2673,6 +3143,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
                 hidePanel()
             } else {
                 NSSound.beep()
+                flashActionHint(L10n.copyNoPasteableContent)
             }
             return
         }
@@ -2682,6 +3153,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         let item = displayItems[row]
         guard store.writeToPasteboard(item) else {
             NSSound.beep()
+            flashActionHint(L10n.copyNoPasteableContent)
             return
         }
         triggerHaptic()
@@ -2713,19 +3185,25 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
     }
 
     func deletePressed() {
+        flushPendingSearchReload()
         let selectedRows = tableView.selectedRowIndexes.sorted()
         guard !selectedRows.isEmpty else { return }
         let nextIndex = selectedRows.first ?? 0
-        for row in selectedRows.reversed() {
-            if row < displayItems.count {
-                store.remove(displayItems[row])
-            }
+        let toRemove = selectedRows.compactMap { row -> ClipItem? in
+            row < displayItems.count ? displayItems[row] : nil
         }
+        let removedCount = store.removeItemsForUndo(toRemove)
+        guard removedCount > 0 else { return }
+        showsDeleteUndoHint = true
         reload()
         if !displayItems.isEmpty {
             let idx = min(nextIndex, displayItems.count - 1)
             tableView.selectRowIndexes(IndexSet(integer: idx), byExtendingSelection: false)
             tableView.scrollRowToVisible(idx)
+        }
+        updateBottomHint()
+        if let appDelegate = NSApp.delegate as? AppDelegate {
+            appDelegate.flashStatusMessage(L10n.deleteUndoFlash(removedCount), duration: 3.0)
         }
     }
 
@@ -2758,7 +3236,44 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         alert.addButton(withTitle: L10n.cancel)
         panel.makeKeyAndOrderFront(nil)
         if alert.runModal() == .alertFirstButtonReturn {
-            store.clear(preservePinned: true)
+            let count = store.clearForUndo(preservePinned: true)
+            showsDeleteUndoHint = true
+            reload()
+            updateBottomHint()
+            if count > 0, let appDelegate = NSApp.delegate as? AppDelegate {
+                appDelegate.flashStatusMessage(L10n.clearUndoFlash(count), duration: 3.0)
+            }
+        }
+    }
+
+    @objc private func promptEditText() {
+        let row = tableView.clickedRow >= 0 ? tableView.clickedRow : tableView.selectedRow
+        guard row >= 0, row < displayItems.count else { return }
+        let item = displayItems[row]
+        guard item.kind == .text else { return }
+
+        let alert = NSAlert()
+        alert.messageText = L10n.editTextTitle
+        alert.alertStyle = .informational
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 360, height: 160))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        let textView = NSTextView(frame: scroll.contentView.bounds)
+        textView.isEditable = true
+        textView.isRichText = false
+        textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        textView.string = item.text ?? ""
+        textView.autoresizingMask = [.width, .height]
+        scroll.documentView = textView
+        alert.accessoryView = scroll
+
+        alert.addButton(withTitle: L10n.save)
+        alert.addButton(withTitle: L10n.cancel)
+        panel.makeKeyAndOrderFront(nil)
+        if alert.runModal() == .alertFirstButtonReturn {
+            store.updateText(textView.string, for: item)
+            invalidateSearchHaystackCache()
             reload()
         }
     }

@@ -1,8 +1,58 @@
 import AppKit
 import Foundation
 
+extension NSAttributedString.Key {
+    /// Decorative Markdown chrome (language label, copy control) that must not
+    /// appear in preview copy. Prose and code stay as shown.
+    static let markdownChrome = NSAttributedString.Key("com.williamlao.clipboardmate.markdownChrome")
+    static let markdownCodeCopyIndex = NSAttributedString.Key("com.williamlao.clipboardmate.markdownCodeCopyIndex")
+}
+
+extension NSAttributedString {
+    func stringByRemovingMarkdownChrome() -> String {
+        let mutable = NSMutableAttributedString(attributedString: self)
+        let fullRange = NSRange(location: 0, length: mutable.length)
+        mutable.enumerateAttribute(.markdownChrome, in: fullRange, options: .reverse) { value, range, _ in
+            guard (value as? Bool) == true else { return }
+            mutable.deleteCharacters(in: range)
+        }
+        return mutable.string
+    }
+}
+
+/// Fenced code background. `NSTextBlock` has no corner radius, so the fill and stroke are drawn here.
+final class RoundedCodeTextBlock: NSTextBlock {
+    override func drawBackground(withFrame frameRect: NSRect, in controlView: NSView?, characterRange charRange: NSRange, layoutManager: NSLayoutManager) {
+        let rect = frameRect.insetBy(dx: 0.5, dy: 0.5)
+        guard rect.width > 2, rect.height > 2 else { return }
+        let path = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
+        fillColor(for: controlView).setFill()
+        path.fill()
+        NSColor.separatorColor.setStroke()
+        path.lineWidth = 1
+        path.stroke()
+    }
+
+    private func fillColor(for view: NSView?) -> NSColor {
+        let appearance = view?.effectiveAppearance ?? NSAppearance.currentDrawing()
+        var resolved = NSColor.black.withAlphaComponent(0.045)
+        appearance.performAsCurrentDrawingAppearance {
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            resolved = isDark
+                ? NSColor.white.withAlphaComponent(0.08)
+                : NSColor.black.withAlphaComponent(0.045)
+        }
+        return resolved
+    }
+}
+
 /// 纯原生 Markdown 排版与排字引擎（0 外部依赖，精准保留结构换行、标题层级、列表缩进与代码块样式）
 enum MarkdownRenderer {
+
+    struct RenderedDocument {
+        let text: NSAttributedString
+        let codeBlocks: [String]
+    }
 
     private enum TableAlignment {
         case left, center, right
@@ -17,61 +67,123 @@ enum MarkdownRenderer {
         let endIndex: Int
     }
 
-    /// 将 Markdown 源码原生排版为带有自然换行、段落间距、标题层级、列表缩进与代码块的 NSAttributedString
-    static func render(_ markdown: String, baseFontSize: CGFloat = 13) -> NSAttributedString {
+    /// 将 Markdown 源码原生排版为带有自然换行、段落间距、标题层级、列表缩进与代码块的文档
+    static func render(_ markdown: String, baseFontSize: CGFloat = 13) -> RenderedDocument {
         // 超过 40,000 字符硬件熔断保护，防止极端大文本阻塞主线程
         if markdown.count > 40_000 {
-            return NSAttributedString(
-                string: markdown,
-                attributes: [
-                    .font: NSFont.monospacedSystemFont(ofSize: baseFontSize, weight: .regular),
-                    .foregroundColor: NSColor.labelColor
-                ]
+            return RenderedDocument(
+                text: NSAttributedString(
+                    string: markdown,
+                    attributes: [
+                        .font: NSFont.monospacedSystemFont(ofSize: baseFontSize, weight: .regular),
+                        .foregroundColor: NSColor.labelColor
+                    ]
+                ),
+                codeBlocks: []
             )
         }
 
         let result = NSMutableAttributedString()
+        var codeBlocks: [String] = []
         let lines = markdown.components(separatedBy: "\n")
 
         var inCodeBlock = false
         var codeBlockLang: String? = nil
         var codeBlockLines: [String] = []
+        var inMathBlock = false
+        var mathLines: [String] = []
 
         func flushCodeBlock() {
-            guard !codeBlockLines.isEmpty else { return }
+            guard !codeBlockLines.isEmpty || codeBlockLang != nil else { return }
             let codeContent = codeBlockLines.joined(separator: "\n")
-            let codeFont = NSFont.monospacedSystemFont(ofSize: max(11, baseFontSize - 1), weight: .regular)
+            let blockIndex = codeBlocks.count
+            codeBlocks.append(codeContent)
 
-            let pStyle = NSMutableParagraphStyle()
-            pStyle.lineSpacing = 2
-            pStyle.paragraphSpacing = 8
-            pStyle.headIndent = 8
-            pStyle.firstLineHeadIndent = 8
+            let fenceLang = codeBlockLang.flatMap(CodeLanguage.fromFenceLanguage)
+            let highlightLang = fenceLang ?? SyntaxHighlighter.detectLanguage(codeContent)
+            let codeFontSize = max(11, baseFontSize - 1)
+            let codeFont = NSFont.monospacedSystemFont(ofSize: codeFontSize, weight: .regular)
+            let fenceBlock = makeCodeFenceTextBlock()
 
-            // 尝试对代码块进行语法高亮
-            var codeAttr: NSMutableAttributedString
-            let targetLang = codeBlockLang.flatMap(CodeLanguage.fromFenceLanguage)
-            if let targetLang {
-                codeAttr = NSMutableAttributedString(attributedString: SyntaxHighlighter.highlight(code: codeContent, language: targetLang, fontSize: max(11, baseFontSize - 1)))
-            } else if let autoLang = SyntaxHighlighter.detectLanguage(codeContent) {
-                codeAttr = NSMutableAttributedString(attributedString: SyntaxHighlighter.highlight(code: codeContent, language: autoLang, fontSize: max(11, baseFontSize - 1)))
+            result.append(makeCodeBlockChrome(
+                label: codeBlockLabel(fenceHint: codeBlockLang, detected: highlightLang),
+                blockIndex: blockIndex,
+                baseFontSize: baseFontSize,
+                fenceBlock: fenceBlock
+            ))
+
+            let layoutText = codeContent.hasSuffix("\n") ? String(codeContent.dropLast()) : codeContent
+            let codeStyle = codeFenceParagraphStyle(fenceBlock: fenceBlock, alignment: .left, spacingBefore: 0)
+            if layoutText.isEmpty {
+                result.append(NSAttributedString(string: "\n", attributes: [
+                    .font: codeFont,
+                    .foregroundColor: NSColor.labelColor,
+                    .paragraphStyle: codeStyle
+                ]))
             } else {
-                codeAttr = NSMutableAttributedString(
-                    string: codeContent,
-                    attributes: [
+                let codeAttr: NSMutableAttributedString
+                if let highlightLang {
+                    codeAttr = NSMutableAttributedString(attributedString: SyntaxHighlighter.highlight(code: layoutText, language: highlightLang, fontSize: codeFontSize))
+                } else {
+                    codeAttr = NSMutableAttributedString(
+                        string: layoutText,
+                        attributes: [
+                            .font: codeFont,
+                            .foregroundColor: NSColor.labelColor
+                        ]
+                    )
+                }
+                let fullRange = NSRange(location: 0, length: codeAttr.length)
+                codeAttr.removeAttribute(.backgroundColor, range: fullRange)
+                codeAttr.addAttribute(.paragraphStyle, value: codeStyle, range: fullRange)
+                if !layoutText.hasSuffix("\n") {
+                    codeAttr.append(NSAttributedString(string: "\n", attributes: [
                         .font: codeFont,
-                        .foregroundColor: NSColor.labelColor
-                    ]
-                )
+                        .paragraphStyle: codeStyle
+                    ]))
+                }
+                result.append(codeAttr)
             }
 
-            codeAttr.addAttribute(.backgroundColor, value: NSColor.quaternaryLabelColor, range: NSRange(location: 0, length: codeAttr.length))
-            codeAttr.addAttribute(.paragraphStyle, value: pStyle, range: NSRange(location: 0, length: codeAttr.length))
+            let tailStyle = NSMutableParagraphStyle()
+            tailStyle.paragraphSpacingBefore = 8
+            result.append(NSAttributedString(string: "\n", attributes: [
+                .font: NSFont.systemFont(ofSize: baseFontSize / 2),
+                .paragraphStyle: tailStyle
+            ]))
 
-            result.append(codeAttr)
-            result.append(NSAttributedString(string: "\n", attributes: [.font: codeFont, .paragraphStyle: pStyle]))
             codeBlockLines.removeAll()
             codeBlockLang = nil
+        }
+
+        func flushMathBlock() {
+            let body = mathLines.joined(separator: "\n")
+            mathLines.removeAll()
+            guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            let blockIndex = codeBlocks.count
+            codeBlocks.append(body)
+            let fontSize = max(11, baseFontSize - 1)
+            let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+            let fenceBlock = makeCodeFenceTextBlock()
+            result.append(makeCodeBlockChrome(
+                label: L10n.mathFormula,
+                blockIndex: blockIndex,
+                baseFontSize: baseFontSize,
+                fenceBlock: fenceBlock
+            ))
+            let style = codeFenceParagraphStyle(fenceBlock: fenceBlock, alignment: .left, spacingBefore: 0)
+            let shown = body.hasSuffix("\n") ? body : body + "\n"
+            result.append(NSAttributedString(string: shown, attributes: [
+                .font: font,
+                .foregroundColor: NSColor.labelColor,
+                .paragraphStyle: style
+            ]))
+            let tailStyle = NSMutableParagraphStyle()
+            tailStyle.paragraphSpacingBefore = 8
+            result.append(NSAttributedString(string: "\n", attributes: [
+                .font: NSFont.systemFont(ofSize: baseFontSize / 2),
+                .paragraphStyle: tailStyle
+            ]))
         }
 
         var lineIndex = 0
@@ -81,20 +193,38 @@ enum MarkdownRenderer {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
             // 1. 代码块围栏 ```
-            if trimmed.hasPrefix("```") {
+            if MarkdownSyntax.isFence(trimmed) {
                 if inCodeBlock {
                     inCodeBlock = false
                     flushCodeBlock()
                 } else {
                     inCodeBlock = true
-                    let langHint = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-                    codeBlockLang = langHint.isEmpty ? nil : langHint
+                    codeBlockLang = MarkdownSyntax.fenceLanguageHint(trimmed)
                 }
                 continue
             }
 
             if inCodeBlock {
                 codeBlockLines.append(line)
+                continue
+            }
+
+            if let singleMath = MarkdownSyntax.singleLineDisplayMath(trimmed) {
+                mathLines = [singleMath]
+                flushMathBlock()
+                continue
+            }
+            if MarkdownSyntax.isDisplayMathToggle(trimmed) {
+                if inMathBlock {
+                    inMathBlock = false
+                    flushMathBlock()
+                } else {
+                    inMathBlock = true
+                }
+                continue
+            }
+            if inMathBlock {
+                mathLines.append(line)
                 continue
             }
 
@@ -115,7 +245,7 @@ enum MarkdownRenderer {
             }
 
             // 4. 分割线 (---, ***, ___)
-            if trimmed == "---" || trimmed == "***" || trimmed == "___" {
+            if MarkdownSyntax.isHorizontalRule(trimmed) {
                 let pStyle = NSMutableParagraphStyle()
                 pStyle.paragraphSpacing = 6
                 let hr = NSAttributedString(
@@ -131,41 +261,34 @@ enum MarkdownRenderer {
             }
 
             // 5. 标题 (# ~ ######)
-            if trimmed.hasPrefix("#") {
-                var level = 0
-                let chars = Array(trimmed)
-                while level < chars.count && chars[level] == "#" {
-                    level += 1
+            if let level = MarkdownSyntax.atxHeadingLevel(trimmed) {
+                let titleText = String(trimmed.dropFirst(level + 1)).trimmingCharacters(in: .whitespaces)
+                let headerSize: CGFloat
+                switch level {
+                case 1: headerSize = baseFontSize + 6 // ~19pt
+                case 2: headerSize = baseFontSize + 4 // ~17pt
+                case 3: headerSize = baseFontSize + 2 // ~15pt
+                default: headerSize = baseFontSize + 1 // ~14pt
                 }
-                if level <= 6 && chars.count > level && chars[level] == " " {
-                    let titleText = String(chars.dropFirst(level + 1)).trimmingCharacters(in: .whitespaces)
-                    let headerSize: CGFloat
-                    switch level {
-                    case 1: headerSize = baseFontSize + 6 // ~19pt
-                    case 2: headerSize = baseFontSize + 4 // ~17pt
-                    case 3: headerSize = baseFontSize + 2 // ~15pt
-                    default: headerSize = baseFontSize + 1 // ~14pt
-                    }
 
-                    let pStyle = NSMutableParagraphStyle()
-                    pStyle.paragraphSpacing = 6
-                    pStyle.lineSpacing = 3
+                let pStyle = NSMutableParagraphStyle()
+                pStyle.paragraphSpacing = 6
+                pStyle.lineSpacing = 3
 
-                    let headerAttr = NSMutableAttributedString(
-                        string: titleText + "\n",
-                        attributes: [
-                            .font: NSFont.systemFont(ofSize: headerSize, weight: .bold),
-                            .foregroundColor: NSColor.labelColor,
-                            .paragraphStyle: pStyle
-                        ]
-                    )
-                    result.append(headerAttr)
-                    continue
-                }
+                let headerAttr = NSMutableAttributedString(
+                    string: titleText + "\n",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: headerSize, weight: .bold),
+                        .foregroundColor: NSColor.labelColor,
+                        .paragraphStyle: pStyle
+                    ]
+                )
+                result.append(headerAttr)
+                continue
             }
 
             // 6. 引用块 (>)
-            if trimmed.hasPrefix(">") {
+            if MarkdownSyntax.isBlockQuote(trimmed) {
                 let quoteText = String(trimmed.dropFirst(1)).trimmingCharacters(in: .whitespaces)
                 let pStyle = NSMutableParagraphStyle()
                 pStyle.headIndent = 12
@@ -194,19 +317,19 @@ enum MarkdownRenderer {
             var bulletPrefix: String? = nil
             var bulletColor = NSColor.systemBlue
 
-            if trimmed.hasPrefix("- [x] ") || trimmed.hasPrefix("- [X] ") {
+            if MarkdownSyntax.isCheckedTaskListItem(trimmed) {
                 bulletPrefix = "☑  "
                 bulletColor = NSColor.systemGreen
                 lineContent = String(trimmed.dropFirst(6))
-            } else if trimmed.hasPrefix("- [ ] ") {
+            } else if MarkdownSyntax.isTaskListItem(trimmed) {
                 bulletPrefix = "☐  "
                 bulletColor = NSColor.secondaryLabelColor
                 lineContent = String(trimmed.dropFirst(6))
-            } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("+ ") {
+            } else if MarkdownSyntax.isUnorderedListItem(trimmed) {
                 bulletPrefix = "•  "
                 bulletColor = NSColor.systemBlue
                 lineContent = String(trimmed.dropFirst(2))
-            } else if let numMatch = trimmed.range(of: "^\\d+\\.\\s+", options: .regularExpression) {
+            } else if MarkdownSyntax.isOrderedListItem(trimmed), let numMatch = trimmed.range(of: "^\\d+\\.\\s+", options: .regularExpression) {
                 bulletPrefix = String(trimmed[numMatch])
                 bulletColor = NSColor.systemBlue
                 lineContent = String(trimmed[numMatch.upperBound...])
@@ -236,7 +359,62 @@ enum MarkdownRenderer {
         }
 
         flushCodeBlock()
-        return result
+        flushMathBlock()
+        return RenderedDocument(text: result, codeBlocks: codeBlocks)
+    }
+
+    private static func codeBlockLabel(fenceHint: String?, detected: CodeLanguage?) -> String {
+        if let hint = fenceHint?.trimmingCharacters(in: .whitespacesAndNewlines), !hint.isEmpty {
+            return CodeLanguage.fromFenceLanguage(hint)?.displayName ?? hint
+        }
+        return detected?.displayName ?? L10n.codeLabel
+    }
+
+    private static func makeCodeFenceTextBlock() -> NSTextBlock {
+        let block = RoundedCodeTextBlock()
+        block.setValue(100, type: .percentageValueType, for: .width)
+        block.setWidth(8, type: .absoluteValueType, for: .padding)
+        block.setWidth(0, type: .absoluteValueType, for: .border)
+        block.setWidth(0, type: .absoluteValueType, for: .margin)
+        block.backgroundColor = .clear
+        block.verticalAlignment = .topAlignment
+        return block
+    }
+
+    private static func codeFenceParagraphStyle(
+        fenceBlock: NSTextBlock,
+        alignment: NSTextAlignment,
+        spacingBefore: CGFloat
+    ) -> NSParagraphStyle {
+        let pStyle = NSMutableParagraphStyle()
+        pStyle.textBlocks = [fenceBlock]
+        pStyle.alignment = alignment
+        pStyle.lineSpacing = 1
+        pStyle.paragraphSpacing = 0
+        pStyle.paragraphSpacingBefore = spacingBefore
+        pStyle.lineBreakMode = .byWordWrapping
+        pStyle.headIndent = 0
+        pStyle.firstLineHeadIndent = 0
+        return pStyle
+    }
+
+    private static func makeCodeBlockChrome(
+        label: String,
+        blockIndex: Int,
+        baseFontSize: CGFloat,
+        fenceBlock: NSTextBlock
+    ) -> NSAttributedString {
+        let font = NSFont.monospacedSystemFont(ofSize: max(10, baseFontSize - 3), weight: .semibold)
+        let pStyle = codeFenceParagraphStyle(fenceBlock: fenceBlock, alignment: .right, spacingBefore: 10)
+
+        return NSAttributedString(string: label + "\n", attributes: [
+            .font: font,
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: pStyle,
+            .markdownChrome: true,
+            .markdownCodeCopyIndex: blockIndex,
+            .toolTip: "Copy"
+        ])
     }
 
     // MARK: - GFM 表格
@@ -383,6 +561,19 @@ enum MarkdownRenderer {
 
     /// 渲染单行内的 Markdown 标记（粗体、斜体、删除线、行内代码、链接）
     private static func renderInlineMarkdown(_ text: String, baseFontSize: CGFloat, pStyle: NSParagraphStyle, defaultColor: NSColor = NSColor.labelColor, isItalic: Bool = false, monospaced: Bool = false, forceBold: Bool = false) -> NSAttributedString {
+        let pieces = inlineMathPieces(in: text)
+        if pieces.contains(where: \.isMath) {
+            let combined = NSMutableAttributedString()
+            for piece in pieces {
+                if piece.isMath {
+                    combined.append(inlineMathAttributed(piece.text, baseFontSize: baseFontSize, pStyle: pStyle))
+                } else if !piece.text.isEmpty {
+                    combined.append(renderInlineMarkdown(piece.text, baseFontSize: baseFontSize, pStyle: pStyle, defaultColor: defaultColor, isItalic: isItalic, monospaced: monospaced, forceBold: forceBold))
+                }
+            }
+            return combined
+        }
+
         var options = AttributedString.MarkdownParsingOptions()
         options.interpretedSyntax = .inlineOnlyPreservingWhitespace
         options.failurePolicy = .returnPartiallyParsedIfPossible
@@ -441,5 +632,93 @@ enum MarkdownRenderer {
         }
 
         return lineResult
+    }
+
+    private struct InlineMathPiece {
+        let text: String
+        let isMath: Bool
+    }
+
+    /// Keeps `$...$` and `\(...\)` as formula source. A bare amount like `$12.50` is left alone.
+    private static func inlineMathPieces(in text: String) -> [InlineMathPiece] {
+        let chars = Array(text)
+        var pieces: [InlineMathPiece] = []
+        var plain = ""
+        var index = 0
+
+        func flushPlain() {
+            guard !plain.isEmpty else { return }
+            pieces.append(InlineMathPiece(text: plain, isMath: false))
+            plain = ""
+        }
+
+        while index < chars.count {
+            if chars[index] == "\\", index + 1 < chars.count, chars[index + 1] == "(" {
+                if let end = closingDelimiter(in: chars, from: index + 2, first: "\\", second: ")") {
+                    let inner = String(chars[(index + 2)..<end])
+                    if isFormulaSource(inner) {
+                        flushPlain()
+                        pieces.append(InlineMathPiece(text: "\\(" + inner + "\\)", isMath: true))
+                        index = end + 2
+                        continue
+                    }
+                }
+            }
+            if chars[index] == "$", index == 0 || chars[index - 1] != "\\", index + 1 >= chars.count || chars[index + 1] != "$" {
+                if let end = closingDollar(in: chars, from: index + 1) {
+                    let inner = String(chars[(index + 1)..<end])
+                    if isFormulaSource(inner) {
+                        flushPlain()
+                        pieces.append(InlineMathPiece(text: "$" + inner + "$", isMath: true))
+                        index = end + 1
+                        continue
+                    }
+                }
+            }
+            plain.append(chars[index])
+            index += 1
+        }
+        flushPlain()
+        if pieces.isEmpty {
+            return [InlineMathPiece(text: text, isMath: false)]
+        }
+        return pieces
+    }
+
+    private static func closingDollar(in chars: [Character], from start: Int) -> Int? {
+        var index = start
+        while index < chars.count {
+            if chars[index] == "$", index == 0 || chars[index - 1] != "\\" {
+                return index
+            }
+            index += 1
+        }
+        return nil
+    }
+
+    private static func closingDelimiter(in chars: [Character], from start: Int, first: Character, second: Character) -> Int? {
+        var index = start
+        while index + 1 < chars.count {
+            if chars[index] == first, chars[index + 1] == second {
+                return index
+            }
+            index += 1
+        }
+        return nil
+    }
+
+    private static func isFormulaSource(_ inner: String) -> Bool {
+        let trimmed = inner.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return false }
+        return trimmed.range(of: #"^\d+([.,]\d+)?$"#, options: .regularExpression) == nil
+    }
+
+    private static func inlineMathAttributed(_ text: String, baseFontSize: CGFloat, pStyle: NSParagraphStyle) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [
+            .font: NSFont.monospacedSystemFont(ofSize: max(11, baseFontSize - 1), weight: .medium),
+            .foregroundColor: NSColor.systemTeal,
+            .backgroundColor: NSColor.quaternaryLabelColor,
+            .paragraphStyle: pStyle
+        ])
     }
 }

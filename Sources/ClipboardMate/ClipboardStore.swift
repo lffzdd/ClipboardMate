@@ -142,7 +142,15 @@ final class ClipboardStore: NSObject {
     var onQueueFinished: (() -> Void)?
 
     private(set) var items: [ClipItem] = []
+    /// 主文件与备份均解码失败，但磁盘上仍有历史文件时置位，避免用空列表覆盖磁盘。
+    private(set) var historyLoadFailed = false
     var onChanged: (() -> Void)?
+    var onOCRUpdated: ((UUID) -> Void)?
+
+    private(set) var pendingOCRItemIDs: Set<UUID> = []
+    private var undoDeleteBatch: [(item: ClipItem, index: Int)]?
+    private var undoDeleteCommitWork: DispatchWorkItem?
+    private static let undoDeleteRetention: TimeInterval = 45
 
     enum QueueOrder: String, CaseIterable {
         case fifo = "fifo"
@@ -368,8 +376,12 @@ final class ClipboardStore: NSObject {
         }
 
         let pngData = imagePNGData(from: pb)
-        let html = cappedRichText(pb.string(forType: .html))
-        let rtf = cappedRichData(pb.data(forType: .rtf))
+        let rawHTML = pb.string(forType: .html)
+        let rawRTF = pb.data(forType: .rtf)
+        let html = cappedRichText(rawHTML)
+        let rtf = cappedRichData(rawRTF)
+        let richDropped = (rawHTML.map { !$0.isEmpty && $0.utf8.count > Self.maxRichTextBytes } ?? false)
+            || (rawRTF.map { !$0.isEmpty && $0.count > Self.maxRichTextBytes } ?? false)
         let plain = extractPlainText(from: pb, html: html, rtf: rtf)
 
         // 2. 网页复制图片时剪贴板常同时带 URL/替代文本；此时优先收图。
@@ -380,7 +392,7 @@ final class ClipboardStore: NSObject {
 
         // 3. 文本（保留 HTML/RTF，供 ⌥Enter 去格式）
         if let plain, !plain.isEmpty {
-            addText(plain, html: html, rtf: rtf, appName: source.name, bundleId: source.bundleId)
+            addText(plain, html: html, rtf: rtf, richFormatDropped: richDropped, appName: source.name, bundleId: source.bundleId)
             return
         }
 
@@ -473,9 +485,18 @@ final class ClipboardStore: NSObject {
         return nil
     }
 
-    private func addText(_ text: String, html: String? = nil, rtf: Data? = nil, appName: String? = nil, bundleId: String? = nil) {
+    private func addText(
+        _ text: String,
+        html: String? = nil,
+        rtf: Data? = nil,
+        richFormatDropped: Bool = false,
+        appName: String? = nil,
+        bundleId: String? = nil
+    ) {
         if let first = items.first, first.kind == .text, first.text == text { return }
-        insert(ClipItem(kind: .text, text: text, html: html, rtf: rtf, createdAt: Date(), sourceAppName: appName, sourceAppBundleId: bundleId))
+        var item = ClipItem(kind: .text, text: text, html: html, rtf: rtf, createdAt: Date(), sourceAppName: appName, sourceAppBundleId: bundleId)
+        item.richFormatDropped = richFormatDropped
+        insert(item)
     }
 
     private func addFiles(_ paths: [String], appName: String? = nil, bundleId: String? = nil) {
@@ -521,7 +542,7 @@ final class ClipboardStore: NSObject {
             sourceAppBundleId: bundleId
         )
         insert(item)
-        recognizeText(for: item.id, pngData: pngData)
+        recognizeText(for: item.id, pngData: pngData, highPriority: true)
     }
 
     private func insert(_ item: ClipItem) {
@@ -565,6 +586,7 @@ final class ClipboardStore: NSObject {
     }
 
     func remove(_ item: ClipItem) {
+        commitUndoDeleteBatchIfNeeded()
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
         removeImageFile(of: items[idx])
         items.remove(at: idx)
@@ -572,7 +594,146 @@ final class ClipboardStore: NSObject {
         onChanged?()
     }
 
+    var canUndoDelete: Bool { !(undoDeleteBatch?.isEmpty ?? true) }
+
+    /// 删除并保留撤销窗口；图片文件在撤销过期后才从磁盘删除。
+    @discardableResult
+    func removeItemsForUndo(_ itemsToRemove: [ClipItem]) -> Int {
+        commitUndoDeleteBatchIfNeeded()
+        guard !itemsToRemove.isEmpty else { return 0 }
+
+        var batch: [(item: ClipItem, index: Int)] = []
+        let ids = Set(itemsToRemove.map(\.id))
+        for idx in items.indices.reversed() where ids.contains(items[idx].id) {
+            batch.append((items[idx], idx))
+            items.remove(at: idx)
+        }
+        guard !batch.isEmpty else { return 0 }
+
+        undoDeleteBatch = batch.sorted { $0.index < $1.index }
+        save()
+        onChanged?()
+        scheduleUndoDeleteCommit()
+        return batch.count
+    }
+
+    @discardableResult
+    func undoLastDelete() -> Bool {
+        guard let batch = undoDeleteBatch, !batch.isEmpty else { return false }
+        undoDeleteCommitWork?.cancel()
+        undoDeleteCommitWork = nil
+        for entry in batch.sorted(by: { $0.index < $1.index }) {
+            let insertAt = min(entry.index, items.count)
+            items.insert(entry.item, at: insertAt)
+        }
+        undoDeleteBatch = nil
+        save()
+        onChanged?()
+        return true
+    }
+
+    private func scheduleUndoDeleteCommit() {
+        undoDeleteCommitWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.commitUndoDeleteBatchIfNeeded()
+        }
+        undoDeleteCommitWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.undoDeleteRetention, execute: work)
+    }
+
+    private func commitUndoDeleteBatchIfNeeded() {
+        undoDeleteCommitWork?.cancel()
+        undoDeleteCommitWork = nil
+        guard let batch = undoDeleteBatch else { return }
+        for entry in batch {
+            removeImageFile(of: entry.item)
+        }
+        undoDeleteBatch = nil
+    }
+
+    func isOCRPending(_ item: ClipItem) -> Bool {
+        pendingOCRItemIDs.contains(item.id)
+    }
+
+    func requestOCRIfNeeded(for item: ClipItem) {
+        guard item.kind == .image, item.ocrText == nil, !pendingOCRItemIDs.contains(item.id),
+              let name = item.imageFile else { return }
+        let url = imagesDir.appendingPathComponent(name)
+        guard let data = try? Data(contentsOf: url) else { return }
+        recognizeText(for: item.id, pngData: data, highPriority: true)
+    }
+
+    @discardableResult
+    func removeEntriesWithMissingFiles() -> Int {
+        commitUndoDeleteBatchIfNeeded()
+        let toRemove = items.filter { $0.kind == .file && $0.allFilesMissing }
+        guard !toRemove.isEmpty else { return 0 }
+        let ids = Set(toRemove.map(\.id))
+        var removed = 0
+        for idx in items.indices.reversed() where ids.contains(items[idx].id) {
+            removeImageFile(of: items[idx])
+            items.remove(at: idx)
+            removed += 1
+        }
+        if removed > 0 {
+            save()
+            onChanged?()
+        }
+        return removed
+    }
+
+    @discardableResult
+    func removeEntriesWithAnyMissingFiles() -> Int {
+        commitUndoDeleteBatchIfNeeded()
+        let toRemove = items.filter { $0.kind == .file && $0.hasMissingFiles }
+        guard !toRemove.isEmpty else { return 0 }
+        let ids = Set(toRemove.map(\.id))
+        var removed = 0
+        for idx in items.indices.reversed() where ids.contains(items[idx].id) {
+            removeImageFile(of: items[idx])
+            items.remove(at: idx)
+            removed += 1
+        }
+        if removed > 0 {
+            save()
+            onChanged?()
+        }
+        return removed
+    }
+
+    @discardableResult
+    func clearForUndo(preservePinned: Bool = true) -> Int {
+        commitUndoDeleteBatchIfNeeded()
+        var batch: [(item: ClipItem, index: Int)] = []
+        for idx in items.indices.reversed() {
+            let item = items[idx]
+            if preservePinned, item.pinned { continue }
+            batch.append((item, idx))
+            items.remove(at: idx)
+        }
+        guard !batch.isEmpty else { return 0 }
+        undoDeleteBatch = batch.sorted { $0.index < $1.index }
+        imageCache.removeAllObjects()
+        previewImageCache.removeAllObjects()
+        lastImageHash = nil
+        save(allowEmpty: true)
+        onChanged?()
+        scheduleUndoDeleteCommit()
+        return batch.count
+    }
+
+    func updateText(_ text: String, for item: ClipItem) {
+        guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
+        items[idx].text = text
+        items[idx].html = nil
+        items[idx].rtf = nil
+        items[idx].richFormatDropped = false
+        save()
+        onChanged?()
+    }
+
     func clear(preservePinned: Bool = true) {
+        commitUndoDeleteBatchIfNeeded()
         if preservePinned {
             let toRemove = items.filter { !$0.pinned }
             for item in toRemove { removeImageFile(of: item) }
@@ -584,7 +745,7 @@ final class ClipboardStore: NSObject {
         imageCache.removeAllObjects()
         previewImageCache.removeAllObjects()
         lastImageHash = nil
-        save()
+        save(allowEmpty: true)
         onChanged?()
     }
 
@@ -820,37 +981,92 @@ final class ClipboardStore: NSObject {
 
     // MARK: - Vision 离线文字识别 (OCR)
 
-    private let ocrQueue = DispatchQueue(label: "com.williamlao.clipboardmate.ocr", qos: .utility)
+    private let ocrQueue = DispatchQueue(label: "com.williamlao.clipboardmate.ocr", qos: .userInitiated)
 
-    private func recognizeText(for itemId: UUID, pngData: Data) {
+    private static let ocrMaxPixel: Int = 2048
+
+    private func pngDataForOCR(_ pngData: Data) -> Data? {
+        guard let rep = NSBitmapImageRep(data: pngData) else { return pngData }
+        let maxSide = max(rep.pixelsWide, rep.pixelsHigh)
+        guard maxSide > Self.ocrMaxPixel else { return pngData }
+        guard let scaled = makeDownsampledImage(from: pngData, maxPixel: Self.ocrMaxPixel),
+              let out = scaled.representations.first as? NSBitmapImageRep,
+              let compressed = out.representation(using: .png, properties: [:]) else {
+            return pngData
+        }
+        return compressed
+    }
+
+    private func recognizeText(for itemId: UUID, pngData: Data, highPriority: Bool = false) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pendingOCRItemIDs.insert(itemId)
+            self.onOCRUpdated?(itemId)
+        }
+
         ocrQueue.async { [weak self] in
             guard let self else { return }
-            guard let source = CGImageSourceCreateWithData(pngData as CFData, nil),
-                  let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
-
-            let request = VNRecognizeTextRequest { [weak self] req, error in
-                guard let self, error == nil,
-                      let observations = req.results as? [VNRecognizedTextObservation] else { return }
-                let strings = observations.compactMap { $0.topCandidates(1).first?.string }
-                let fullText = strings.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !fullText.isEmpty else { return }
-
-                DispatchQueue.main.async {
-                    if let idx = self.items.firstIndex(where: { $0.id == itemId }) {
-                        self.items[idx].ocrText = fullText
-                        self.save()
-                        self.onChanged?()
-                    }
-                }
+            let ocrData = self.pngDataForOCR(pngData) ?? pngData
+            guard let source = CGImageSourceCreateWithData(ocrData as CFData, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+                DispatchQueue.main.async { self.finishOCR(itemId: itemId, text: "") }
+                return
             }
 
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = highPriority ? .accurate : .fast
+            request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
+            request.usesLanguageCorrection = highPriority
+
+            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+            var fullText = ""
+            if (try? handler.perform([request])) != nil,
+               let observations = request.results {
+                let strings = observations.compactMap { $0.topCandidates(1).first?.string }
+                fullText = strings.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            if fullText.isEmpty, !highPriority {
+                self.recognizeTextAccurateFallback(itemId: itemId, cgImage: cgImage)
+                return
+            }
+
+            DispatchQueue.main.async {
+                self.finishOCR(itemId: itemId, text: fullText)
+            }
+        }
+    }
+
+    private func recognizeTextAccurateFallback(itemId: UUID, cgImage: CGImage) {
+        ocrQueue.async { [weak self] in
+            guard let self else { return }
+            let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
             request.usesLanguageCorrection = true
-
             let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-            try? handler.perform([request])
+            var fullText = ""
+            if (try? handler.perform([request])) != nil,
+               let observations = request.results {
+                let strings = observations.compactMap { $0.topCandidates(1).first?.string }
+                fullText = strings.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            DispatchQueue.main.async {
+                self.finishOCR(itemId: itemId, text: fullText)
+            }
         }
+    }
+
+    private func finishOCR(itemId: UUID, text: String) {
+        pendingOCRItemIDs.remove(itemId)
+        guard let idx = items.firstIndex(where: { $0.id == itemId }) else {
+            onOCRUpdated?(itemId)
+            return
+        }
+        items[idx].ocrText = text
+        save()
+        onChanged?()
+        onOCRUpdated?(itemId)
     }
 
     // MARK: - 持久化
@@ -859,33 +1075,84 @@ final class ClipboardStore: NSObject {
     private var backupURL: URL { dir.appendingPathComponent("items.json.bak") }
 
     private func load() {
-        guard let decoded = decodeHistory(from: fileURL) ?? decodeHistory(from: backupURL) else { return }
+        historyLoadFailed = false
+        if let decoded = decodeHistory(from: fileURL) {
+            applyLoadedItems(decoded)
+            return
+        }
+        if let decoded = decodeHistory(from: backupURL) {
+            applyLoadedItems(decoded)
+            // 主文件损坏时用备份恢复正本
+            save(allowEmpty: false)
+            return
+        }
+
+        if historyJSONExistsOnDisk() {
+            historyLoadFailed = true
+            NSLog("ClipboardMate: failed to decode items.json and items.json.bak — refusing empty save until history is recovered or new clips are added")
+        }
+    }
+
+    private func historyJSONExistsOnDisk() -> Bool {
+        let fm = FileManager.default
+        for url in [fileURL, backupURL] {
+            guard fm.fileExists(atPath: url.path),
+                  let data = try? Data(contentsOf: url),
+                  data.count > 4 else { continue }
+            let prefix = String(data: data.prefix(32), encoding: .utf8) ?? ""
+            if prefix.contains("[") { return true }
+        }
+        return false
+    }
+
+    private func applyLoadedItems(_ decoded: [ClipItem]) {
         items = decoded.filter { item in
             item.kind != .image || (item.imageFile.map { FileManager.default.fileExists(atPath: imagesDir.appendingPathComponent($0).path) } ?? false)
         }
 
         let unrecImages = items.filter { $0.kind == .image && $0.ocrText == nil }
-        for item in unrecImages.prefix(20) {
+        for (offset, item) in unrecImages.prefix(40).enumerated() {
             if let name = item.imageFile,
                let data = try? Data(contentsOf: imagesDir.appendingPathComponent(name)) {
-                recognizeText(for: item.id, pngData: data)
+                recognizeText(for: item.id, pngData: data, highPriority: offset < 3)
             }
         }
     }
 
     private func decodeHistory(from url: URL) -> [ClipItem]? {
         guard let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
-        return try? JSONDecoder().decode([ClipItem].self, from: data)
+        do {
+            return try JSONDecoder().decode([ClipItem].self, from: data)
+        } catch {
+            NSLog("ClipboardMate: decode \(url.lastPathComponent) failed: \(error)")
+            return nil
+        }
     }
 
-    private func save() {
-        guard let data = try? JSONEncoder().encode(items) else { return }
+    private func save(allowEmpty: Bool = true) {
+        if historyLoadFailed, items.isEmpty, !allowEmpty {
+            return
+        }
+        if historyLoadFailed, items.isEmpty {
+            return
+        }
+        guard let data = try? JSONEncoder().encode(items) else {
+            NSLog("ClipboardMate: encode history failed")
+            return
+        }
         let fm = FileManager.default
         if fm.fileExists(atPath: fileURL.path) {
             try? fm.removeItem(at: backupURL)
             try? fm.copyItem(at: fileURL, to: backupURL)
         }
-        try? data.write(to: fileURL, options: .atomic)
+        do {
+            try data.write(to: fileURL, options: .atomic)
+            if !items.isEmpty {
+                historyLoadFailed = false
+            }
+        } catch {
+            NSLog("ClipboardMate: write items.json failed: \(error)")
+        }
     }
 }
 

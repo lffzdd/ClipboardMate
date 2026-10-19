@@ -41,6 +41,19 @@ enum PinyinHelper {
 
     /// 检查 text 是否包含 token（原词包含、全拼包含、首字母包含）
     static func matches(text: String, token: String) -> Bool {
+        matches(text: text, token: token, pinyinScanLimit: nil)
+    }
+
+    /// 列表搜索专用：有限滑动窗口拼音扫描，避免对大段剪贴板反复 CFStringTransform。
+    static func matchesForSearch(text: String, token: String) -> Bool {
+        matches(text: text, token: token, pinyinScanLimit: -1)
+    }
+
+    static func tokenContainsChinese(_ token: String) -> Bool {
+        token.unicodeScalars.contains { $0.value >= 0x4E00 && $0.value <= 0x9FA5 }
+    }
+
+    private static func matches(text: String, token: String, pinyinScanLimit: Int?) -> Bool {
         let lowerText = text.lowercased()
         let lowerToken = token.lowercased()
         if lowerToken.isEmpty { return true }
@@ -48,6 +61,35 @@ enum PinyinHelper {
 
         let hasChinese = text.unicodeScalars.contains { $0.value >= 0x4E00 && $0.value <= 0x9FA5 }
         guard hasChinese else { return false }
+
+        if pinyinScanLimit == -1 {
+            let windowSize = 800
+            let maxWindows = 3
+            if text.count <= windowSize {
+                let py = pinyin(for: text)
+                return py.full.contains(lowerToken) || py.initials.contains(lowerToken)
+            }
+            var start = text.startIndex
+            var windows = 0
+            while start < text.endIndex, windows < maxWindows {
+                let end = text.index(start, offsetBy: windowSize, limitedBy: text.endIndex) ?? text.endIndex
+                let slice = String(text[start..<end])
+                let py = pinyin(for: slice)
+                if py.full.contains(lowerToken) || py.initials.contains(lowerToken) {
+                    return true
+                }
+                windows += 1
+                if end == text.endIndex { break }
+                start = end
+            }
+            return false
+        }
+
+        if let pinyinScanLimit, pinyinScanLimit > 0 {
+            let capped = text.count <= pinyinScanLimit ? text : String(text.prefix(pinyinScanLimit))
+            let py = pinyin(for: capped)
+            return py.full.contains(lowerToken) || py.initials.contains(lowerToken)
+        }
 
         let windowSize = 240
         let step = 180

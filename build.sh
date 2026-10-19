@@ -3,6 +3,27 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+BUNDLE_ID="com.williamlao.clipboardmate"
+APP_NAME="ClipboardMate"
+DEST="/Applications/ClipboardMate.app"
+
+was_running=false
+if pgrep -x "$APP_NAME" >/dev/null 2>&1; then
+    was_running=true
+    echo "🔄 检测到 $APP_NAME 正在运行，正在退出…"
+    osascript -e "tell application id \"$BUNDLE_ID\" to quit" 2>/dev/null \
+        || osascript -e "tell application \"$APP_NAME\" to quit" 2>/dev/null \
+        || killall "$APP_NAME" 2>/dev/null || true
+    for _ in $(seq 1 50); do
+        pgrep -x "$APP_NAME" >/dev/null 2>&1 || break
+        sleep 0.1
+    done
+    if pgrep -x "$APP_NAME" >/dev/null 2>&1; then
+        echo "⚠️  未能完全退出 $APP_NAME，部署可能失败；请手动退出后重试。"
+        exit 1
+    fi
+fi
+
 CACHE_DIR=".cache"
 mkdir -p "$CACHE_DIR"
 
@@ -46,7 +67,6 @@ codesign --force -s - -r '=designated => identifier "com.williamlao.clipboardmat
 echo "✅ 构建完成: $PWD/$APP"
 
 # 部署至 /Applications，并清除 build/ 目录下的副本与防索引标记
-DEST="/Applications/ClipboardMate.app"
 echo "📦 正在同步部署至 $DEST..."
 rm -rf "$DEST"
 cp -R "$APP" "$DEST"
@@ -54,3 +74,8 @@ codesign --force -s - -r '=designated => identifier "com.williamlao.clipboardmat
 rm -rf "$APP"
 touch build/.metadata_never_index
 echo "🎉 部署完成：$DEST (已清理工程临时副本，系统只保留唯一正本)"
+
+if [[ "$was_running" == true ]]; then
+    echo "🚀 正在重新启动 ${APP_NAME}…"
+    open -a "$DEST"
+fi

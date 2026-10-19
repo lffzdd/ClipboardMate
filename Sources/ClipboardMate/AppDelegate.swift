@@ -67,6 +67,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if hotKey?.isRegistered != true {
             showHotkeyConflictAlert(preset)
         }
+        verifyQueueHotkeys()
+        maybeShowAccessibilityBuildHint()
+    }
+
+    private func verifyQueueHotkeys() {
+        let keys = [queueHotKey, queueUndoHotKey, queueCollectHotKey]
+        guard keys.contains(where: { $0?.isRegistered != true }) else { return }
+        flashStatusMessage(L10n.queueHotkeyConflictMessage, duration: 4.0)
+    }
+
+    private func maybeShowAccessibilityBuildHint() {
+        guard ClipboardStore.shared.autoPasteEnabled, !PasteSimulator.isTrusted else { return }
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+        let key = "accessibilityHintLastBuild"
+        guard UserDefaults.standard.string(forKey: key) != build else { return }
+        UserDefaults.standard.set(build, forKey: key)
+        flashStatusMessage(L10n.accessibilityBuildHint, duration: 4.0)
     }
 
     private func setupStatusItem() {
@@ -117,6 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hotkeyMenu: NSMenu?
     private var blacklistMenu: NSMenu?
     private var storageMenu: NSMenu?
+    private var preferencesMenu: NSMenu?
     private var statusMenu: NSMenu!
 
     private var statusFlashWork: DispatchWorkItem?
@@ -136,6 +154,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        let shortcutsItem = NSMenuItem(title: L10n.shortcutsHelpMenu, action: #selector(showShortcutsHelp), keyEquivalent: "")
+        shortcutsItem.target = self
+        menu.addItem(shortcutsItem)
+
+        let prefsRoot = NSMenuItem(title: L10n.preferences, action: nil, keyEquivalent: "")
+        let prefsMenu = NSMenu()
+        preferencesMenu = prefsMenu
+        prefsRoot.submenu = prefsMenu
+        menu.addItem(prefsRoot)
+
         // 唤出快捷键设置
         let hotkeyItem = NSMenuItem(title: L10n.hotkeySettings, action: nil, keyEquivalent: "")
         let hkMenu = NSMenu()
@@ -154,16 +182,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hkMenu.addItem(quickPasteItem)
         hotkeyItem.submenu = hkMenu
         self.hotkeyMenu = hkMenu
-        menu.addItem(hotkeyItem)
+        prefsMenu.addItem(hotkeyItem)
 
-        // 开机自启动
         let launchItem = NSMenuItem(title: L10n.launchAtLogin, action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         launchItem.target = self
         launchItem.state = isLaunchAtLoginEnabled ? .on : .off
         self.launchAtLoginItem = launchItem
-        menu.addItem(launchItem)
+        prefsMenu.addItem(launchItem)
 
-        // 呼出位置设置
+        prefsMenu.addItem(.separator())
+
+        let preserveFilterItem = NSMenuItem(title: L10n.preservePanelFilter, action: #selector(togglePreservePanelFilter(_:)), keyEquivalent: "")
+        preserveFilterItem.target = self
+        preserveFilterItem.state = (UserDefaults.standard.object(forKey: "preservePanelFilterOnOpen") as? Bool ?? true) ? .on : .off
+        prefsMenu.addItem(preserveFilterItem)
+
+        let closeOutsideItem = NSMenuItem(title: L10n.closeOnOutsideClick, action: #selector(toggleCloseOnOutsideClick(_:)), keyEquivalent: "")
+        closeOutsideItem.target = self
+        closeOutsideItem.state = (UserDefaults.standard.object(forKey: "closePanelOnOutsideClick") as? Bool ?? true) ? .on : .off
+        prefsMenu.addItem(closeOutsideItem)
+
+        let closeSwitchItem = NSMenuItem(title: L10n.closeOnAppSwitch, action: #selector(toggleCloseOnAppSwitch(_:)), keyEquivalent: "")
+        closeSwitchItem.target = self
+        closeSwitchItem.state = (UserDefaults.standard.object(forKey: "closePanelOnAppSwitch") as? Bool ?? true) ? .on : .off
+        prefsMenu.addItem(closeSwitchItem)
+
+        let delayItem = NSMenuItem(title: L10n.appSwitchDelayMenu, action: nil, keyEquivalent: "")
+        let delayMenu = NSMenu()
+        let currentDelay = PanelController.appSwitchCloseDelay
+        for delay in [0.0, 0.4, 1.0] {
+            let item = NSMenuItem(title: L10n.appSwitchDelaySeconds(delay), action: #selector(selectAppSwitchCloseDelay(_:)), keyEquivalent: "")
+            item.representedObject = delay
+            item.target = self
+            item.state = abs(currentDelay - delay) < 0.01 ? .on : .off
+            delayMenu.addItem(item)
+        }
+        delayItem.submenu = delayMenu
+        prefsMenu.addItem(delayItem)
+
+        let languageItem = NSMenuItem(title: L10n.appLanguageMenu, action: nil, keyEquivalent: "")
+        let languageMenu = NSMenu()
+        let currentLang = UserDefaults.standard.string(forKey: "appLanguage") ?? "system"
+        for (code, title) in [("system", L10n.appLanguageSystem), ("zh", L10n.appLanguageChinese), ("en", L10n.appLanguageEnglish)] {
+            let item = NSMenuItem(title: title, action: #selector(selectAppLanguage(_:)), keyEquivalent: "")
+            item.representedObject = code
+            item.target = self
+            item.state = (code == currentLang) ? .on : .off
+            languageMenu.addItem(item)
+        }
+        languageItem.submenu = languageMenu
+        prefsMenu.addItem(languageItem)
+
+        prefsMenu.addItem(.separator())
+
+        let opacityItem = NSMenuItem()
+        opacityItem.view = PanelOpacityMenuView()
+        prefsMenu.addItem(opacityItem)
+
         let posItem = NSMenuItem(title: L10n.windowPosition, action: nil, keyEquivalent: "")
         let posMenu = NSMenu()
         let currentMode = UserDefaults.standard.string(forKey: "windowPositionMode") ?? "center"
@@ -181,11 +256,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         posMenu.addItem(mouseItem)
 
         posItem.submenu = posMenu
-        menu.addItem(posItem)
+        prefsMenu.addItem(posItem)
 
-        menu.addItem(.separator())
-
-        // 历史容量设置
         let limitItem = NSMenuItem(title: L10n.historyCapacity, action: nil, keyEquivalent: "")
         let limitMenu = NSMenu()
         let currentMax = ClipboardStore.shared.maxItems
@@ -197,39 +269,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             limitMenu.addItem(item)
         }
         limitItem.submenu = limitMenu
-        menu.addItem(limitItem)
+        prefsMenu.addItem(limitItem)
 
-        // 存储与缓存管理
-        let storageItem = NSMenuItem(title: L10n.storageMenu, action: nil, keyEquivalent: "")
-        let stMenu = NSMenu()
-        storageItem.submenu = stMenu
-        self.storageMenu = stMenu
-        menu.addItem(storageItem)
+        prefsMenu.addItem(.separator())
 
-        menu.addItem(.separator())
-
-        // 敏感数据过滤
         let privacyItem = NSMenuItem(title: L10n.ignorePasswords, action: #selector(togglePrivacyFilter(_:)), keyEquivalent: "")
         privacyItem.target = self
         privacyItem.state = ClipboardStore.shared.ignoreSensitiveData ? .on : .off
-        menu.addItem(privacyItem)
+        prefsMenu.addItem(privacyItem)
 
-        // 排除应用黑名单
         let blacklistItem = NSMenuItem(title: L10n.blacklistMenu, action: nil, keyEquivalent: "")
         let blMenu = NSMenu()
         blacklistItem.submenu = blMenu
         self.blacklistMenu = blMenu
-        menu.addItem(blacklistItem)
+        prefsMenu.addItem(blacklistItem)
 
-        menu.addItem(.separator())
+        prefsMenu.addItem(.separator())
 
-        // 始终常驻右侧预览
         let previewPrefItem = NSMenuItem(title: L10n.alwaysShowPreview, action: #selector(toggleAlwaysShowPreview(_:)), keyEquivalent: "")
         previewPrefItem.target = self
         previewPrefItem.state = UserDefaults.standard.bool(forKey: "alwaysShowPreview") ? .on : .off
-        menu.addItem(previewPrefItem)
+        prefsMenu.addItem(previewPrefItem)
 
-        // 预览布局
         let layoutItem = NSMenuItem(title: L10n.previewLayout, action: nil, keyEquivalent: "")
         let layoutMenu = NSMenu()
         let compact = NSMenuItem(title: L10n.previewLayoutCompact, action: #selector(selectPreviewLayout(_:)), keyEquivalent: "")
@@ -255,9 +316,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         layoutItem.submenu = layoutMenu
         previewLayoutMenu = layoutMenu
         updatePreviewLayoutMenuState()
-        menu.addItem(layoutItem)
+        prefsMenu.addItem(layoutItem)
 
-        // 填表队列设置
         let queuePrefItem = NSMenuItem(title: L10n.queueSettingsMenu, action: nil, keyEquivalent: "")
         let qMenu = NSMenu()
 
@@ -296,15 +356,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         qMenu.addItem(undoItem)
 
         queuePrefItem.submenu = qMenu
-        menu.addItem(queuePrefItem)
+        prefsMenu.addItem(queuePrefItem)
 
-        menu.addItem(.separator())
-
-        // 回车自动粘贴（辅助功能）
         let autoPasteItem = NSMenuItem(title: L10n.autoPasteItem, action: #selector(handleAutoPasteToggle), keyEquivalent: "")
         autoPasteItem.target = self
         updateAutoPasteMenuItem(autoPasteItem)
-        menu.addItem(autoPasteItem)
+        prefsMenu.addItem(autoPasteItem)
+
+        prefsMenu.addItem(.separator())
+
+        let storageItem = NSMenuItem(title: L10n.storageMenu, action: nil, keyEquivalent: "")
+        let stMenu = NSMenu()
+        storageItem.submenu = stMenu
+        self.storageMenu = stMenu
+        prefsMenu.addItem(storageItem)
 
         menu.addItem(.separator())
 
@@ -340,13 +405,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if item.action == #selector(handleAutoPasteToggle) {
                 updateAutoPasteMenuItem(item)
             }
+            if item.action == #selector(togglePreservePanelFilter(_:)) {
+                item.state = (UserDefaults.standard.object(forKey: "preservePanelFilterOnOpen") as? Bool ?? true) ? .on : .off
+            }
+            if item.action == #selector(toggleCloseOnOutsideClick(_:)) {
+                item.state = (UserDefaults.standard.object(forKey: "closePanelOnOutsideClick") as? Bool ?? true) ? .on : .off
+            }
+            if item.action == #selector(toggleCloseOnAppSwitch(_:)) {
+                item.state = (UserDefaults.standard.object(forKey: "closePanelOnAppSwitch") as? Bool ?? true) ? .on : .off
+            }
+        }
+        preferencesMenu?.items.forEach { item in
+            if let opacity = item.view as? PanelOpacityMenuView {
+                opacity.reload()
+            }
+            if item.action == #selector(togglePreservePanelFilter(_:)) {
+                item.state = (UserDefaults.standard.object(forKey: "preservePanelFilterOnOpen") as? Bool ?? true) ? .on : .off
+            }
+            if item.action == #selector(toggleCloseOnOutsideClick(_:)) {
+                item.state = (UserDefaults.standard.object(forKey: "closePanelOnOutsideClick") as? Bool ?? true) ? .on : .off
+            }
+            if item.action == #selector(toggleCloseOnAppSwitch(_:)) {
+                item.state = (UserDefaults.standard.object(forKey: "closePanelOnAppSwitch") as? Bool ?? true) ? .on : .off
+            }
         }
         updateHotkeyMenuState()
         updateBlacklistMenu()
         updateStorageMenu()
         updatePreviewLayoutMenuState()
         updateQueueMenuItem(in: menu)
+        updateDeleteUndoMenuItem(in: menu)
         updateAccessibilityWarning(in: menu)
+    }
+
+    private func updateDeleteUndoMenuItem(in menu: NSMenu) {
+        menu.items.removeAll { $0.tag == 9996 || $0.tag == 9997 }
+        guard ClipboardStore.shared.canUndoDelete else { return }
+        let undoDelete = NSMenuItem(title: L10n.undoDeleteOrClearMenu, action: #selector(undoDeleteFromMenu), keyEquivalent: "")
+        undoDelete.tag = 9996
+        undoDelete.target = self
+        let sep = NSMenuItem.separator()
+        sep.tag = 9997
+        if let showIndex = menu.items.firstIndex(where: { $0.action == #selector(togglePanel) }) {
+            menu.insertItem(undoDelete, at: showIndex + 2)
+            menu.insertItem(sep, at: showIndex + 2)
+        }
+    }
+
+    @objc private func showShortcutsHelp() {
+        ShortcutsHelpWindowController.shared.showHelp()
+    }
+
+    @objc private func undoDeleteFromMenu() {
+        if ClipboardStore.shared.undoLastDelete() {
+            flashStatusMessage(L10n.deleteUndoSuccess)
+            panelController.handleUndoDeleteDidRestore()
+        } else {
+            flashStatusMessage(L10n.deleteUndoEmpty)
+        }
     }
 
     // MARK: - 快捷键管理
@@ -489,6 +605,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let cleanAll = NSMenuItem(title: L10n.cleanAllImageCacheAction, action: #selector(cleanAllImageCache), keyEquivalent: "")
         cleanAll.target = self
         menu.addItem(cleanAll)
+
+        menu.addItem(.separator())
+
+        let removeMissing = NSMenuItem(title: L10n.removeMissingFilesAction, action: #selector(removeMissingFileEntries), keyEquivalent: "")
+        removeMissing.target = self
+        menu.addItem(removeMissing)
+
+        let removePartial = NSMenuItem(title: L10n.removePartialMissingFilesAction, action: #selector(removePartialMissingFileEntries), keyEquivalent: "")
+        removePartial.target = self
+        menu.addItem(removePartial)
+    }
+
+    @objc private func removePartialMissingFileEntries() {
+        let count = ClipboardStore.shared.removeEntriesWithAnyMissingFiles()
+        if count > 0 {
+            flashStatusMessage(L10n.removedMissingFiles(count))
+            panelController.handleUndoDeleteDidRestore()
+        } else {
+            flashStatusMessage(L10n.removePartialMissingFilesNone)
+        }
+    }
+
+    @objc private func selectAppSwitchCloseDelay(_ sender: NSMenuItem) {
+        guard let delay = sender.representedObject as? Double else { return }
+        UserDefaults.standard.set(delay, forKey: "panelAppSwitchCloseDelay")
+    }
+
+    @objc private func selectAppLanguage(_ sender: NSMenuItem) {
+        guard let code = sender.representedObject as? String else { return }
+        UserDefaults.standard.set(code, forKey: "appLanguage")
+        flashStatusMessage(L10n.languageChangedHint, duration: 3.0)
+        panelController.reloadVisibleRows()
+        statusMenu = createMenu()
+    }
+
+    @objc private func removeMissingFileEntries() {
+        let count = ClipboardStore.shared.removeEntriesWithMissingFiles()
+        if count > 0 {
+            flashStatusMessage(L10n.removedMissingFiles(count))
+            panelController.handleUndoDeleteDidRestore()
+        } else {
+            flashStatusMessage(L10n.removeMissingFilesNone)
+        }
+    }
+
+    @objc private func togglePreservePanelFilter(_ sender: NSMenuItem) {
+        let newValue = !(UserDefaults.standard.object(forKey: "preservePanelFilterOnOpen") as? Bool ?? true)
+        UserDefaults.standard.set(newValue, forKey: "preservePanelFilterOnOpen")
+        sender.state = newValue ? .on : .off
+    }
+
+    @objc private func toggleCloseOnOutsideClick(_ sender: NSMenuItem) {
+        let newValue = !(UserDefaults.standard.object(forKey: "closePanelOnOutsideClick") as? Bool ?? true)
+        UserDefaults.standard.set(newValue, forKey: "closePanelOnOutsideClick")
+        sender.state = newValue ? .on : .off
+    }
+
+    @objc private func toggleCloseOnAppSwitch(_ sender: NSMenuItem) {
+        let newValue = !(UserDefaults.standard.object(forKey: "closePanelOnAppSwitch") as? Bool ?? true)
+        UserDefaults.standard.set(newValue, forKey: "closePanelOnAppSwitch")
+        sender.state = newValue ? .on : .off
     }
 
     @objc private func cleanExpiredImages() {
@@ -588,7 +765,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.insertItem(sep, at: 1)
     }
 
-    private func flashStatusMessage(_ text: String) {
+    func flashStatusMessage(_ text: String, duration: TimeInterval = 1.5) {
         statusItem.button?.toolTip = text
         statusFlashWork?.cancel()
         if !ClipboardStore.shared.isQueueActive {
@@ -599,7 +776,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.updateStatusItemBadge()
         }
         statusFlashWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: work)
     }
 
     private func updateStatusItemBadge() {
@@ -816,7 +993,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.addButton(withTitle: L10n.cancel)
         NSApp.activate(ignoringOtherApps: true)
         if alert.runModal() == .alertFirstButtonReturn {
-            ClipboardStore.shared.clear(preservePinned: true)
+            let count = ClipboardStore.shared.clearForUndo(preservePinned: true)
+            if count > 0 {
+                flashStatusMessage(L10n.clearUndoFlash(count), duration: 3.0)
+                panelController.handleUndoDeleteDidRestore()
+            }
         }
     }
 
@@ -836,4 +1017,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {}
+
+    func applyPanelOpacityFromMenu() {
+        panelController.applyStoredGlassTransparency()
+    }
+}
+
+final class PanelOpacityMenuView: NSView {
+    private let titleLabel = NSTextField(labelWithString: L10n.panelOpacity)
+    private let valueLabel = NSTextField(labelWithString: "")
+    private let slider = NSSlider()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 260, height: 48))
+        titleLabel.font = .systemFont(ofSize: 13)
+        titleLabel.textColor = .labelColor
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        valueLabel.textColor = .secondaryLabelColor
+        valueLabel.alignment = .right
+        slider.minValue = 0
+        slider.maxValue = 1
+        slider.isContinuous = true
+        slider.target = self
+        slider.action = #selector(sliderChanged(_:))
+        slider.controlSize = .small
+        addSubview(titleLabel)
+        addSubview(valueLabel)
+        addSubview(slider)
+        toolTip = L10n.panelOpacityHint
+        reload()
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func layout() {
+        super.layout()
+        let width = bounds.width
+        titleLabel.frame = NSRect(x: 16, y: 26, width: width - 78, height: 16)
+        valueLabel.frame = NSRect(x: width - 58, y: 26, width: 42, height: 16)
+        slider.frame = NSRect(x: 16, y: 4, width: width - 32, height: 20)
+    }
+
+    func reload() {
+        titleLabel.stringValue = L10n.panelOpacity
+        let transparency = PanelController.storedGlassTransparency
+        slider.doubleValue = Double(transparency)
+        slider.isEnabled = !PanelController.reducesTransparency
+        if PanelController.reducesTransparency {
+            valueLabel.stringValue = L10n.panelOpacityReduced
+        } else {
+            valueLabel.stringValue = L10n.panelOpacityPercent(Int((transparency * 100).rounded()))
+        }
+    }
+
+    @objc private func sliderChanged(_ sender: NSSlider) {
+        let transparency = min(1, max(0, sender.doubleValue))
+        UserDefaults.standard.set(transparency, forKey: PanelController.panelGlassTransparencyKey)
+        valueLabel.stringValue = L10n.panelOpacityPercent(Int((transparency * 100).rounded()))
+        (NSApp.delegate as? AppDelegate)?.applyPanelOpacityFromMenu()
+    }
+}
+
+/// Sits above the frosted glass and below the controls. `cover` is the wash opacity.
+final class GlassTintView: NSView {
+    var cover: CGFloat = 0 {
+        didSet {
+            guard cover != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
+    override var isOpaque: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.clear.setFill()
+        bounds.fill()
+        guard cover > 0.001 else { return }
+        NSColor.windowBackgroundColor.withAlphaComponent(cover).setFill()
+        bounds.fill()
+    }
 }

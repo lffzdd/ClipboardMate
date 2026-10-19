@@ -19,10 +19,12 @@ struct ClipItem: Codable {
     var filePaths: [String]? = nil
     var createdAt: Date
     var pinned: Bool = false
+    /// `nil` = 尚未识别；`""` = 已识别但无文字；非空 = OCR 结果
     var ocrText: String?
     var alias: String?
     var sourceAppName: String? = nil
     var sourceAppBundleId: String? = nil
+    var richFormatDropped: Bool = false
 
     var fileCount: Int {
         filePaths?.count ?? 0
@@ -188,5 +190,66 @@ struct ClipItem: Codable {
     var characterCount: Int {
         guard kind == .text, let text else { return 0 }
         return text.count
+    }
+
+    private static let searchBodyCharacterLimit = 4096
+    private static let searchOCRCharacterLimit = 2048
+
+    /// 供历史列表搜索用的有界文本，避免对整段剪贴板做重复拼音扫描。
+    func searchHaystack() -> String {
+        var parts: [String] = []
+        if let alias, !alias.isEmpty { parts.append(alias) }
+        if let sourceAppName, !sourceAppName.isEmpty { parts.append(sourceAppName) }
+
+        switch kind {
+        case .text:
+            if let text, !text.isEmpty {
+                if text.count <= Self.searchBodyCharacterLimit {
+                    parts.append(text)
+                } else {
+                    parts.append(String(text.prefix(Self.searchBodyCharacterLimit)))
+                }
+            }
+        case .image:
+            if let ocr = ocrText, !ocr.isEmpty {
+                if ocr.count <= Self.searchOCRCharacterLimit {
+                    parts.append(ocr)
+                } else {
+                    parts.append(String(ocr.prefix(Self.searchOCRCharacterLimit)))
+                }
+            }
+            parts.append(L10n.imageLabel)
+            parts.append("image")
+            parts.append("截图")
+            parts.append("截屏")
+            parts.append("screenshot")
+            parts.append("screen shot")
+        case .file:
+            if let paths = filePaths {
+                for path in paths {
+                    parts.append(URL(fileURLWithPath: path).lastPathComponent)
+                    parts.append(path)
+                }
+            }
+        }
+
+        return parts.joined(separator: "\n")
+    }
+
+    func matchesSearchTokens(_ tokens: [String]) -> Bool {
+        guard !tokens.isEmpty else { return true }
+        let haystack = searchHaystack()
+        for token in tokens {
+            var matched = PinyinHelper.matchesForSearch(text: haystack, token: token)
+            if !matched, kind == .text, let text, !PinyinHelper.tokenContainsChinese(token) {
+                matched = text.range(of: token, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+            }
+            if !matched, kind == .image {
+                let desc = "\(L10n.imageLabel) image \(width ?? 0)x\(height ?? 0)"
+                matched = desc.localizedCaseInsensitiveContains(token)
+            }
+            if !matched { return false }
+        }
+        return true
     }
 }

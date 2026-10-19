@@ -80,7 +80,7 @@ enum CodeLanguage: String, CaseIterable {
 
 // MARK: - 静态正则缓存池（一次编译，多处高性能复用）
 
-private struct RegexCache {
+struct RegexCache {
     // 字符串与注释
     static let doubleQuote = try? NSRegularExpression(pattern: "\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\"", options: [])
     static let singleQuote = try? NSRegularExpression(pattern: "'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'", options: [])
@@ -271,30 +271,54 @@ enum SyntaxHighlighter {
 
     // MARK: - 语言指纹检测
 
-    /// 识别文本的代码语言类型
+    /// 识别文本的代码语言类型。
+    /// Markdown 是文档容器，其它语言是载荷；围栏里的 Python 不能把整篇判成 Python。
     static func detectLanguage(_ text: String) -> CodeLanguage? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        // 1. JSON
-        if (trimmed.hasPrefix("{") && trimmed.hasSuffix("}")) ||
-           (trimmed.hasPrefix("[") && trimmed.hasSuffix("]")) {
-            if let data = trimmed.data(using: .utf8),
-               (try? JSONSerialization.jsonObject(with: data, options: [])) != nil {
-                return .json
-            }
+        if looksLikeJSON(trimmed) {
+            return .json
         }
 
-        let lower = text.lowercased()
+        let document = SourceDocument(trimmed)
+        if document.isMarkdownContainer {
+            return .markdown
+        }
+        if let payload = detectPayloadLanguage(
+            trimmed: document.outerText.trimmingCharacters(in: .whitespacesAndNewlines),
+            lines: document.outerNonemptyLines
+        ) {
+            return payload
+        }
+        if document.containsTable || document.markdownScore >= 3 {
+            return .markdown
+        }
+        if looksLikeCode(document.outerText) {
+            return .generic
+        }
+        return nil
+    }
 
-        // 2. PHP
+    private static func looksLikeJSON(_ trimmed: String) -> Bool {
+        guard (trimmed.hasPrefix("{") && trimmed.hasSuffix("}")) ||
+              (trimmed.hasPrefix("[") && trimmed.hasSuffix("]")) else {
+            return false
+        }
+        guard let data = trimmed.data(using: .utf8) else { return false }
+        return (try? JSONSerialization.jsonObject(with: data, options: [])) != nil
+    }
+
+    /// Code / markup fingerprints. Callers must pass fence-stripped outer text.
+    private static func detectPayloadLanguage(trimmed: String, lines: [String]) -> CodeLanguage? {
+        guard !trimmed.isEmpty else { return nil }
+        let lower = trimmed.lowercased()
+
         if lower.contains("<?php") || lower.hasPrefix("<?=") ||
            (lower.contains("$this->") && (lower.contains("function") || lower.contains("class"))) {
             return .php
         }
 
-        // 3. HTML / XML：仅在文本本身以标记开头、或含有多个完整标记时认定，
-        // 避免说明文字里的 `<tag>` / `</tag>` 被误判为 XML。
         let markupTagCount = RegexCache.completeMarkupTag?
             .numberOfMatches(in: trimmed, options: [], range: NSRange(location: 0, length: (trimmed as NSString).length)) ?? 0
         let startsWithMarkup = trimmed.hasPrefix("<")
@@ -307,13 +331,11 @@ enum SyntaxHighlighter {
             return .xml
         }
 
-        // 4. Shell / Bash 增强指纹
         if trimmed.hasPrefix("#!/bin/bash") || trimmed.hasPrefix("#!/bin/sh") ||
            trimmed.hasPrefix("#!/usr/bin/env bash") || trimmed.hasPrefix("#!/usr/bin/env zsh") ||
            trimmed.hasPrefix("#!/bin/zsh") {
             return .shell
         }
-        let lines = trimmed.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         if let firstLine = lines.first {
             let fl = firstLine.lowercased()
             let isShellPrompt = fl.hasPrefix("$ ") || fl.hasPrefix("# ")
@@ -325,7 +347,6 @@ enum SyntaxHighlighter {
                 return .shell
             }
         }
-        // 多行混合判定（至少包含两个典型 shell 特征且至少有一个有效命令）
         var commandHits = 0
         var syntaxHits = 0
         for line in lines.prefix(15) {
@@ -340,12 +361,10 @@ enum SyntaxHighlighter {
             return .shell
         }
 
-        // 5. SQL
         if looksLikeSQL(trimmed.lowercased()) {
             return .sql
         }
 
-        // 6. Swift
         let swiftMarkers = ["import swiftui", "import appkit", "import uikit", "import foundation", "guard let", "if let", "@state", "@binding", "mutating func", "override func", "public func", "private func"]
         for marker in swiftMarkers {
             if lower.contains(marker) { return .swift }
@@ -354,7 +373,6 @@ enum SyntaxHighlighter {
             return .swift
         }
 
-        // 7. Go (Golang)
         if lower.hasPrefix("package ") || lines.contains(where: { $0.hasPrefix("package ") }) {
             return .go
         }
@@ -363,52 +381,39 @@ enum SyntaxHighlighter {
             return .go
         }
 
-        // 8. Rust
         if lower.contains("fn main()") || lower.contains("let mut ") || lower.contains("println!") ||
            lower.contains("pub struct ") || lower.contains("impl ") || lower.contains("derive(") ||
            (lower.contains("pub fn ") && lower.contains("->")) {
             return .rust
         }
 
-        // 9. C / C++
         if lower.contains("#include <") || lower.contains("#include \"") ||
            lower.contains("int main(") || lower.contains("std::") || lower.contains("cout <<") || lower.contains("nullptr") ||
            lower.contains("template<") || lower.contains("template <") {
             return .cpp
         }
 
-        // 10. Java
         if lower.contains("public class ") || lower.contains("public static void main") ||
            lower.contains("system.out.println") || lower.contains("import java.") ||
            (lower.contains("public interface ") && lower.contains("{")) {
             return .java
         }
 
-        // 11. Kotlin
         if lower.contains("fun main(") || lower.contains("data class ") || lower.contains("companion object") ||
            lower.contains("sealed class ") || lower.contains("suspend fun ") ||
            (lower.contains("fun ") && (lower.contains("val ") || lower.contains("var "))) {
             return .kotlin
         }
 
-        // 12. Python
-        if trimmed.hasPrefix("#!/usr/bin/env python") || lower.contains("def __init__") ||
-           lower.contains("if __name__ == '__main__':") || lower.contains("if __name__ == \"__main__\":") {
+        if looksLikePython(trimmed: trimmed, lines: lines) {
             return .python
         }
-        var pyScore = 0
-        if lower.contains("def ") && lower.contains(":") { pyScore += 2 }
-        if lower.contains("elif ") && lower.contains(":") { pyScore += 1 }
-        if lower.contains("self.") { pyScore += 2 }
-        if pyScore >= 3 { return .python }
 
-        // 13. CSS
         if lower.contains("{") && lower.contains("}") &&
            (lower.contains("px;") || lower.contains("rem;") || lower.contains("color:") || lower.contains("display:") || lower.contains("margin:") || lower.contains("padding:")) {
             return .css
         }
 
-        // 14. TypeScript / JavaScript
         if (lower.contains("interface ") && lower.contains("{") && lower.contains(":")) ||
            (lower.contains("type ") && lower.contains(" = ")) || lower.contains("as const") {
             return .typescript
@@ -422,73 +427,49 @@ enum SyntaxHighlighter {
             return .javascript
         }
 
-        // 15. YAML
-        if trimmed.hasPrefix("---") ||
-           (lines.count >= 2 && lines.prefix(8).allSatisfy { line in
-               line.hasPrefix("#") || line.contains(":") || line.hasPrefix("- ") || line.isEmpty
-           } && !lower.contains("{") && !lower.contains(";") && (lower.contains("version:") || lower.contains("services:") || lower.contains("name:") || lower.contains("image:") || lower.contains("spec:"))) {
+        if looksLikeYAML(trimmed: trimmed, lines: lines, lower: lower) {
             return .yaml
-        }
-
-        // 16. Markdown
-        if containsMarkdownTable(in: lines) {
-            return .markdown
-        }
-        var mdScore = 0
-        if lines.contains(where: { $0.hasPrefix("# ") || $0.hasPrefix("## ") || $0.hasPrefix("### ") }) {
-            mdScore += 2
-        }
-        if text.contains("```") { mdScore += 3 }
-        if text.contains("](") && (text.contains("http://") || text.contains("https://")) { mdScore += 1 }
-        if lines.contains(where: { $0.hasPrefix("- [ ]") || $0.hasPrefix("- [x]") || $0.hasPrefix("- [X]") }) {
-            mdScore += 2
-        }
-        // 聊天/文档里很常见：没有标题和代码围栏，但有 **加粗**、`行内代码`、列表。
-        // 单独出现这些记号不够，组合达到阈值才当成 Markdown，避免把普通笔记误判。
-        if let regex = RegexCache.mdBold,
-           regex.firstMatch(in: text, options: [], range: NSRange(location: 0, length: (text as NSString).length)) != nil {
-            mdScore += 2
-        }
-        if let regex = RegexCache.mdInlineCode,
-           regex.firstMatch(in: text, options: [], range: NSRange(location: 0, length: (text as NSString).length)) != nil {
-            mdScore += 2
-        }
-        let markdownListCount = lines.filter { line in
-            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
-            return trimmedLine.hasPrefix("- ") || trimmedLine.hasPrefix("* ") || trimmedLine.hasPrefix("+ ")
-                || trimmedLine.range(of: "^\\d+\\.\\s+", options: .regularExpression) != nil
-        }.count
-        if markdownListCount >= 2 {
-            mdScore += 1
-        }
-        if mdScore >= 3 {
-            return .markdown
-        }
-
-        // 17. 通用代码降级判定
-        if looksLikeCode(text) {
-            return .generic
         }
 
         return nil
     }
 
-    /// GitHub Flavored Markdown 表格至少由“表头行 + 分隔行”组成。
-    private static func containsMarkdownTable(in lines: [String]) -> Bool {
-        guard lines.count >= 2 else { return false }
-        for index in 0..<(lines.count - 1) {
-            guard lines[index].contains("|") else { continue }
-            var cells = lines[index + 1].trimmingCharacters(in: .whitespaces)
-                .split(separator: "|", omittingEmptySubsequences: false)
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-            if cells.first?.isEmpty == true { cells.removeFirst() }
-            if cells.last?.isEmpty == true { cells.removeLast() }
-            guard cells.count >= 2 else { continue }
-            if cells.allSatisfy({ $0.range(of: "^:?-+:?$", options: .regularExpression) != nil }) {
-                return true
-            }
+    private static func looksLikePython(trimmed: String, lines: [String]) -> Bool {
+        if trimmed.hasPrefix("#!/usr/bin/env python") || trimmed.hasPrefix("#!/usr/bin/python") {
+            return true
         }
-        return false
+        if lines.contains(where: { line in
+            let l = line.lowercased()
+            return l.hasPrefix("def __init__") ||
+                (l.hasPrefix("def ") && l.contains("(")) ||
+                l.hasPrefix("if __name__ == '__main__':") ||
+                l.hasPrefix("if __name__ == \"__main__\":")
+        }) {
+            return true
+        }
+        var pyScore = 0
+        if lines.contains(where: { $0.hasPrefix("def ") && $0.contains(":") }) { pyScore += 2 }
+        if lines.contains(where: { $0.hasPrefix("elif ") && $0.contains(":") }) { pyScore += 1 }
+        if lines.contains(where: { $0.contains("self.") }) { pyScore += 2 }
+        return pyScore >= 3
+    }
+
+    /// A leading `---` is YAML front matter only when mapping keys follow.
+    /// A Markdown thematic break must not win this check by itself.
+    private static func looksLikeYAML(trimmed: String, lines: [String], lower: String) -> Bool {
+        let hasTypicalKeys = lower.contains("version:") || lower.contains("services:") ||
+            lower.contains("name:") || lower.contains("image:") || lower.contains("spec:")
+        let mappingShaped = lines.count >= 2 &&
+            lines.prefix(8).allSatisfy { line in
+                line.hasPrefix("#") || line.contains(":") || line.hasPrefix("- ") || line.isEmpty
+            } && !lower.contains("{") && !lower.contains(";") && hasTypicalKeys
+        if mappingShaped {
+            return true
+        }
+        guard trimmed.hasPrefix("---") else { return false }
+        return lines.dropFirst().prefix(12).contains { line in
+            line.contains(":") && !MarkdownSyntax.isHorizontalRule(line)
+        }
     }
 
     /// 对自然语言说明中的子串命中保持保守，例如 `update` 不应匹配 `updated`。

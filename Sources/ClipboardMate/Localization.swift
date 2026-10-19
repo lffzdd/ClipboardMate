@@ -1,9 +1,16 @@
 import Foundation
 
 enum L10n {
+    private static let appLanguageKey = "appLanguage"
+
     static var isChinese: Bool {
-        let pref = Locale.preferredLanguages.first ?? Locale.current.identifier
-        return pref.hasPrefix("zh")
+        switch UserDefaults.standard.string(forKey: appLanguageKey) ?? "system" {
+        case "zh": return true
+        case "en": return false
+        default:
+            let pref = Locale.preferredLanguages.first ?? Locale.current.identifier
+            return pref.hasPrefix("zh")
+        }
     }
 
     // Menu Bar
@@ -28,7 +35,7 @@ enum L10n {
     static var aboutApp: String { isChinese ? "关于 ClipboardMate" : "About ClipboardMate" }
     static var statusIconDescription: String { isChinese ? "剪贴板历史" : "Clipboard History" }
     static var statusIconTooltip: String {
-        isChinese ? "点击显示历史，右键打开设置" : "Click to show history, right-click for settings"
+        isChinese ? "点击显示历史，右键打开设置与快捷键说明" : "Click for history, right-click for preferences & shortcuts"
     }
     static var autoPasteItem: String { isChinese ? "回车自动粘贴" : "Auto-Paste on Enter" }
     static var grantAccessibilityPrompt: String { isChinese ? "前往系统设置授予辅助功能权限..." : "Grant Accessibility Permission..." }
@@ -42,6 +49,100 @@ enum L10n {
             : "\(shortcut) is already used by another app. Pick a different shortcut, or quit the other clipboard utility."
     }
     static var preferences: String { isChinese ? "偏好设置" : "Preferences" }
+    static var panelOpacity: String { isChinese ? "玻璃透明度" : "Glass Transparency" }
+    static var panelOpacityHint: String {
+        isChinese ? "只改变毛玻璃的罩色。越低越实，文字保持清晰。最右端是现在的玻璃。" : "Changes only the frost. Lower is more solid, and text stays sharp. The right end is the current glass."
+    }
+    static var panelOpacityReduced: String { isChinese ? "系统实色" : "Solid" }
+    static func panelOpacityPercent(_ percent: Int) -> String { "\(percent)%" }
+    static var mathFormula: String { isChinese ? "公式" : "Math" }
+    static var shortcutsHelpMenu: String { isChinese ? "快捷键说明…" : "Keyboard Shortcuts…" }
+    static var shortcutsHelpTitle: String { isChinese ? "ClipboardMate 快捷键" : "ClipboardMate Shortcuts" }
+    static var ocrRecognizing: String { isChinese ? "OCR 识别中…" : "Recognizing text…" }
+    static var ocrNoText: String { isChinese ? "未识别到文字" : "No text detected" }
+    static func deleteUndoFlash(_ count: Int) -> String {
+        isChinese ? "已删除 \(count) 项 · 面板内 ⌘Z 撤销" : "Deleted \(count) item(s) · ⌘Z to undo in panel"
+    }
+    static var deleteUndoSuccess: String { isChinese ? "已恢复删除的条目" : "Restored deleted items" }
+    static var deleteUndoEmpty: String { isChinese ? "没有可恢复的删除" : "Nothing to restore" }
+    static var undoDeleteMenu: String { isChinese ? "撤销删除 (⌘Z)" : "Undo Delete (⌘Z)" }
+    static var bottomHintDeleteUndo: String {
+        isChinese ? "⌘Z 撤销删除" : "⌘Z Undo delete"
+    }
+    static var preservePanelFilter: String {
+        isChinese ? "再次打开时保留搜索与分类" : "Keep Search & Category on Reopen"
+    }
+    static var closeOnOutsideClick: String {
+        isChinese ? "点击面板外自动关闭" : "Close When Clicking Outside"
+    }
+    static var closeOnAppSwitch: String {
+        isChinese ? "切换应用时自动关闭" : "Close When Switching Apps"
+    }
+    static var mergeNoPasteableContent: String {
+        isChinese ? "选中项没有可合并的文本（图片需 OCR 或选文本/文件）" : "Selection has no mergeable text (images need OCR, or pick text/files)"
+    }
+    static var copyNoPasteableContent: String {
+        isChinese ? "选中项无法复制为文本" : "Selection cannot be copied as text"
+    }
+    static var removeMissingFilesAction: String {
+        isChinese ? "移除文件已丢失的历史条目" : "Remove Entries With Missing Files"
+    }
+    static func removedMissingFiles(_ count: Int) -> String {
+        isChinese ? "已移除 \(count) 条丢失文件记录" : "Removed \(count) entries with missing files"
+    }
+    static var removeMissingFilesNone: String {
+        isChinese ? "没有文件已全部丢失的条目" : "No entries with all files missing"
+    }
+    static var removePartialMissingFilesAction: String {
+        isChinese ? "移除含丢失文件的历史条目" : "Remove Entries With Any Missing Files"
+    }
+    static var removePartialMissingFilesNone: String {
+        isChinese ? "没有含丢失文件的条目" : "No entries with missing files"
+    }
+    static var searchFiltering: String { isChinese ? "筛选中…" : "Filtering…" }
+    static func searchResetFlash(_ total: Int) -> String {
+        isChinese ? "已清除上次搜索，显示全部 \(total) 条历史" : "Cleared previous search — showing all \(total) items"
+    }
+    static func emptyFilteredHint(_ total: Int) -> String {
+        isChinese ? "无匹配结果（共 \(total) 条历史）· Esc 清除搜索" : "No matches (\(total) in history) · Esc to clear search"
+    }
+    static var richFormatDroppedHint: String {
+        isChinese ? "仅保存纯文本（原格式过大未保留）" : "Plain text only (rich format omitted — too large)"
+    }
+    static var richFormatDroppedShort: String { isChinese ? "仅纯文本" : "Plain text only" }
+    static func clearUndoFlash(_ count: Int) -> String {
+        isChinese ? "已清空 \(count) 项 · 面板内 ⌘Z 可撤销" : "Cleared \(count) items · ⌘Z to undo in panel"
+    }
+    static var undoDeleteOrClearMenu: String { isChinese ? "撤销删除/清空 (⌘Z)" : "Undo Delete/Clear (⌘Z)" }
+    static func imageMergePlaceholder(w: Int, h: Int) -> String {
+        isChinese ? "[图片 \(w)×\(h)]" : "[Image \(w)×\(h)]"
+    }
+    static var copyPanelTooltip: String {
+        isChinese ? "复制条目到剪贴板；预览/OCR 内选中文字时 ⌘C 为复制选区" : "Copy item; ⌘C copies selection when text is selected in preview"
+    }
+    static var editTextContent: String { isChinese ? "编辑内容…" : "Edit Content…" }
+    static var editTextTitle: String { isChinese ? "编辑剪贴板文本" : "Edit Clipboard Text" }
+    static var appLanguageMenu: String { isChinese ? "界面语言" : "Language" }
+    static var appLanguageSystem: String { isChinese ? "跟随系统" : "System" }
+    static var appLanguageChinese: String { isChinese ? "简体中文" : "Chinese" }
+    static var appLanguageEnglish: String { isChinese ? "English" : "English" }
+    static var languageChangedHint: String {
+        isChinese ? "语言已更新，请重新打开面板以刷新界面" : "Language updated — reopen the panel to refresh UI"
+    }
+    static var queueHotkeyConflictTitle: String { isChinese ? "填表队列快捷键可能未注册" : "Paste Queue Shortcuts May Be Unavailable" }
+    static var queueHotkeyConflictMessage: String {
+        isChinese
+            ? "⌥⌘V / ⌥⌘Z / ⌥⌘C 可能被其他应用占用。填表队列仍可经菜单使用。"
+            : "⌥⌘V / ⌥⌘Z / ⌥⌘C may be in use by another app. You can still control the queue from the menu."
+    }
+    static var accessibilityBuildHint: String {
+        isChinese ? "新版本需重新授权辅助功能才能自动粘贴" : "Re-grant Accessibility after update for auto-paste"
+    }
+    static var appSwitchDelayMenu: String { isChinese ? "切换应用后延迟关闭" : "Delay Close on App Switch" }
+    static func appSwitchDelaySeconds(_ seconds: Double) -> String {
+        if seconds <= 0 { return isChinese ? "立即" : "Immediate" }
+        return isChinese ? "\(seconds) 秒" : "\(seconds)s"
+    }
     static var pasteSelectedTooltip: String { isChinese ? "粘贴当前选中项（回车）" : "Paste selected item (Return)" }
     static var imageFitTooltip: String { isChinese ? "按图片比例恢复合适的预览宽度" : "Fit preview width to the image ratio" }
     static var mergeCopy: String { isChinese ? "合并复制到剪贴板（⌘C）" : "Merge Copy (⌘C)" }
@@ -75,7 +176,11 @@ enum L10n {
     static func quickPasteHint(_ n: Int) -> String { "⌘\(n)" }
 
     // Search & Tabs
-    static var searchPlaceholder: String { isChinese ? "搜索剪贴板历史（空格分词，Tab 切换分类）" : "Search history (space = AND, Tab to switch)" }
+    static var searchPlaceholder: String {
+        isChinese
+            ? "搜索历史（空格分词 · 超长正文前 4000 字内匹配）"
+            : "Search (space = AND · matches first ~4000 chars of long clips)"
+    }
     static var catAll: String { isChinese ? "全部" : "All" }
     static var catText: String { isChinese ? "文本" : "Text" }
     static var catImage: String { isChinese ? "图片" : "Images" }
@@ -284,9 +389,13 @@ enum L10n {
     static var bottomHintUpdated: String {
         let qp = isQuickPasteEnabled
         if isChinese {
-            return qp ? "↵ 粘贴   ⌥↵ 纯文本   Space 预览   ⌘S 填表队列   ⌘1-9 秒贴" : "↵ 粘贴   ⌥↵ 纯文本   Space 预览   ⌘S 填表队列"
+            return qp
+                ? "↵ 粘贴   ⌥↵ 纯文本   Space 预览/搜索分词   ⌘C 复制条目   ⌘1-9 秒贴"
+                : "↵ 粘贴   ⌥↵ 纯文本   Space 预览/搜索分词   ⌘C 复制条目"
         } else {
-            return qp ? "↵ Paste   ⌥↵ Plain Text   Space Preview   ⌘S Queue   ⌘1-9 Paste" : "↵ Paste   ⌥↵ Plain Text   Space Preview   ⌘S Queue"
+            return qp
+                ? "↵ Paste   ⌥↵ Plain Text   Space preview/search   ⌘C copy item   ⌘1-9"
+                : "↵ Paste   ⌥↵ Plain Text   Space preview/search   ⌘C copy item"
         }
     }
     static func bottomHintMultiSelected(_ count: Int) -> String {
@@ -294,6 +403,82 @@ enum L10n {
             return "↵ 合并粘贴(\(count)项)   ⌘S 填表队列   ⌥↵ 纯文本   Delete 删除"
         } else {
             return "↵ Merge (\(count) items)   ⌘S Queue   ⌥↵ Plain Text   Delete"
+        }
+    }
+
+    static var shortcutsCheatsheetBody: String {
+        if isChinese {
+            return """
+            唤出 / 关闭
+            • \(HotkeyPreset.cmdShiftV.shortcutGlyph)（可在偏好设置中更换）— 显示或隐藏历史面板
+            • Esc — 先清空搜索，再关闭面板
+
+            面板内（焦点在列表或搜索框）
+            • ↵ — 粘贴选中项（多选时换行合并）
+            • ⇧↵ — 多选逗号合并粘贴
+            • ⌥↵ — 纯文本粘贴；图片粘贴 OCR 文字
+            • ⌘C — 仅复制到剪贴板，不自动粘贴
+            • ⌘O — 打开链接 / 在访达中显示文件
+            • ⌘P — 置顶 / 取消置顶
+            • ⌘R — 设置别名
+            • ⌘A — 全选当前列表
+            • ⌘S / ⇧⌘S — 启动填表队列（FIFO / LIFO）
+            • ⌘1–⌘9 — 快速粘贴前 9 项（可关闭）
+            • ⌘Z — 撤销上一次删除
+            • Space — 搜索框为空时切换预览；有内容时输入空格分词
+            • Tab / ⇧Tab — 切换顶部分类
+            • Delete — 删除选中条目
+            • ↑ / ↓ — 切换选中（搜索框内可用）
+
+            填表队列（全局）
+            • ⌥⌘V — 粘贴队列下一项
+            • ⌥⌘Z — 队列回退上一项
+            • ⌥⌘C — 连续收集模式开/关
+
+            菜单栏
+            • 左键 — 显示历史
+            • 右键 — 偏好设置与快捷键说明
+
+            偏好设置（面板行为，可选）
+            • 再次打开时保留搜索与分类
+            • 点击面板外 / 切换应用时是否自动关闭
+            """
+        } else {
+            return """
+            Show / dismiss
+            • \(HotkeyPreset.cmdShiftV.shortcutGlyph) (configurable) — Toggle history panel
+            • Esc — Clear search, then close panel
+
+            In panel (list or search focus)
+            • Return — Paste selection (multi-select: newline merge)
+            • Shift+Return — Comma merge paste
+            • Option+Return — Plain text; image → OCR text
+            • ⌘C — Copy to clipboard only
+            • ⌘O — Open link / Reveal file
+            • ⌘P — Pin / unpin
+            • ⌘R — Set alias
+            • ⌘A — Select all in list
+            • ⌘S / Shift+⌘S — Start paste queue (FIFO / LIFO)
+            • ⌘1–⌘9 — Quick paste rows 1–9 (optional)
+            • ⌘Z — Undo last delete
+            • Space — Toggle preview when search empty; otherwise type space
+            • Tab / Shift+Tab — Category tabs
+            • Delete — Remove selected items
+            • ↑ / ↓ — Move selection (works in search field)
+
+            Paste queue (global)
+            • ⌥⌘V — Paste next queued item
+            • ⌥⌘Z — Rewind queue
+            • ⌥⌘C — Toggle collect mode
+
+            Menu bar
+            • Click — Show history
+            • Right-click — Preferences & shortcuts
+
+            Preferences (panel behavior)
+            • Keep search & category when reopening
+            • Close on outside click / app switch
+            """
         }
     }
 }
