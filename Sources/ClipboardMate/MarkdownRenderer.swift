@@ -92,11 +92,11 @@ enum MarkdownRenderer {
 
     /// 将 Markdown 源码原生排版为带有自然换行、段落间距、标题层级、列表缩进与代码块的文档
     static func render(_ markdown: String, baseFontSize: CGFloat = 13) -> RenderedDocument {
-        // 超过 40,000 字符硬件熔断保护，防止极端大文本阻塞主线程
-        if markdown.count > 40_000 {
+        // 超过 40,000 字符熔断：只展示有界纯文本，避免把整段大剪贴板塞进 NSTextView。
+        if ClipTextBudget.isOversizedForPreview(markdown) {
             return RenderedDocument(
                 text: NSAttributedString(
-                    string: markdown,
+                    string: ClipTextBudget.truncatedPreview(markdown),
                     attributes: [
                         .font: NSFont.monospacedSystemFont(ofSize: baseFontSize, weight: .regular),
                         .foregroundColor: NSColor.labelColor

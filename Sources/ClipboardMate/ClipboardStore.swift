@@ -982,6 +982,7 @@ final class ClipboardStore: NSObject {
     // MARK: - Vision 离线文字识别 (OCR)
 
     private let ocrQueue = DispatchQueue(label: "com.williamlao.clipboardmate.ocr", qos: .userInitiated)
+    private let persistQueue = DispatchQueue(label: "com.williamlao.clipboardmate.persist", qos: .utility)
 
     private static let ocrMaxPixel: Int = 2048
 
@@ -1136,7 +1137,16 @@ final class ClipboardStore: NSObject {
         if historyLoadFailed, items.isEmpty {
             return
         }
-        guard let data = try? JSONEncoder().encode(items) else {
+        let snapshot = items
+        let fileURL = self.fileURL
+        let backupURL = self.backupURL
+        persistQueue.async { [weak self] in
+            self?.writeSnapshot(snapshot, fileURL: fileURL, backupURL: backupURL)
+        }
+    }
+
+    private func writeSnapshot(_ snapshot: [ClipItem], fileURL: URL, backupURL: URL) {
+        guard let data = try? JSONEncoder().encode(snapshot) else {
             NSLog("ClipboardMate: encode history failed")
             return
         }
@@ -1147,8 +1157,10 @@ final class ClipboardStore: NSObject {
         }
         do {
             try data.write(to: fileURL, options: .atomic)
-            if !items.isEmpty {
-                historyLoadFailed = false
+            if !snapshot.isEmpty {
+                DispatchQueue.main.async { [weak self] in
+                    self?.historyLoadFailed = false
+                }
             }
         } catch {
             NSLog("ClipboardMate: write items.json failed: \(error)")

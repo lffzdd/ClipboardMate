@@ -274,12 +274,23 @@ enum SyntaxHighlighter {
     /// 识别文本的代码语言类型。
     /// Markdown 是文档容器，其它语言是载荷；围栏里的 Python 不能把整篇判成 Python。
     static func detectLanguage(_ text: String) -> CodeLanguage? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
+        let length = ClipTextBudget.utf16Length(text)
+        guard length > 0 else { return nil }
 
-        if looksLikeJSON(trimmed) {
-            return .json
+        if ClipTextBudget.looksLikeJSONContainer(text) {
+            if length > ClipTextBudget.jsonParseUTF16 {
+                return .json
+            }
+            let trimmedJSON = ClipTextBudget.prefix(text, utf16Count: ClipTextBudget.jsonParseUTF16)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if looksLikeJSON(trimmedJSON) {
+                return .json
+            }
         }
+
+        let sample = ClipTextBudget.prefix(text, utf16Count: ClipTextBudget.detectSampleUTF16)
+        let trimmed = sample.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
 
         let document = SourceDocument(trimmed)
         if document.isMarkdownContainer {
@@ -521,6 +532,17 @@ enum SyntaxHighlighter {
         let boldFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .semibold)
         let baseColor = NSColor.labelColor
 
+        // 超过 40,000 字符：截断后再着色，避免把整段大文本排进预览。
+        if ClipTextBudget.isOversizedForPreview(code) {
+            return NSAttributedString(
+                string: ClipTextBudget.truncatedPreview(code),
+                attributes: [
+                    .font: font,
+                    .foregroundColor: baseColor
+                ]
+            )
+        }
+
         let mutable = NSMutableAttributedString(
             string: code,
             attributes: [
@@ -528,11 +550,6 @@ enum SyntaxHighlighter {
                 .foregroundColor: baseColor
             ]
         )
-
-        // 超过 40,000 字符防止主线程卡顿
-        if code.count > 40_000 {
-            return mutable
-        }
 
         let fullRange = NSRange(location: 0, length: (code as NSString).length)
         let lang = language ?? detectLanguage(code) ?? .generic

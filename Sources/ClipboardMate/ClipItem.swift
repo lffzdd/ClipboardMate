@@ -83,16 +83,19 @@ struct ClipItem: Codable {
             }
         }
         guard kind == .text, let text else { return "" }
-        let oneLine = text
+        let sample = ClipTextBudget.prefix(text, utf16Count: ClipTextBudget.listPreviewUTF16)
+        let oneLine = sample
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        if oneLine.count > 120 {
-            return String(oneLine.prefix(120)) + "…"
+        let clipped = oneLine.count > 120 ? String(oneLine.prefix(120)) + "…" : oneLine
+        if ClipTextBudget.exceeds(text, utf16Count: ClipTextBudget.listPreviewUTF16),
+           !clipped.hasSuffix("…") {
+            return clipped.isEmpty ? "…" : clipped + "…"
         }
-        return oneLine
+        return clipped
     }
 
     var displayTitle: String {
@@ -103,14 +106,18 @@ struct ClipItem: Codable {
     }
 
     var isURL: Bool {
-        guard kind == .text, let str = text?.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
-        return (str.hasPrefix("http://") || str.hasPrefix("https://")) && URL(string: str) != nil
+        guard kind == .text, let str = text else { return false }
+        if ClipTextBudget.exceeds(str, utf16Count: ClipTextBudget.urlMaxUTF16) { return false }
+        let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://")) && URL(string: trimmed) != nil
     }
 
     var colorValue: NSColor? {
-        guard kind == .text, let str = text?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
-        guard str.hasPrefix("#") else { return nil }
-        var hex = String(str.dropFirst())
+        guard kind == .text, let str = text else { return nil }
+        if ClipTextBudget.exceeds(str, utf16Count: ClipTextBudget.colorMaxUTF16) { return nil }
+        let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("#") else { return nil }
+        var hex = String(trimmed.dropFirst())
         guard hex.count == 3 || hex.count == 6 || hex.count == 8 else { return nil }
         if hex.count == 3 {
             hex = hex.map { "\($0)\($0)" }.joined()
@@ -184,12 +191,12 @@ struct ClipItem: Codable {
 
     var lineCount: Int {
         guard kind == .text, let text else { return 0 }
-        return text.components(separatedBy: "\n").count
+        return ClipTextBudget.lineCount(text)
     }
 
     var characterCount: Int {
         guard kind == .text, let text else { return 0 }
-        return text.count
+        return ClipTextBudget.utf16Length(text)
     }
 
     private static let searchBodyCharacterLimit = 4096
@@ -204,19 +211,11 @@ struct ClipItem: Codable {
         switch kind {
         case .text:
             if let text, !text.isEmpty {
-                if text.count <= Self.searchBodyCharacterLimit {
-                    parts.append(text)
-                } else {
-                    parts.append(String(text.prefix(Self.searchBodyCharacterLimit)))
-                }
+                parts.append(ClipTextBudget.prefix(text, utf16Count: Self.searchBodyCharacterLimit))
             }
         case .image:
             if let ocr = ocrText, !ocr.isEmpty {
-                if ocr.count <= Self.searchOCRCharacterLimit {
-                    parts.append(ocr)
-                } else {
-                    parts.append(String(ocr.prefix(Self.searchOCRCharacterLimit)))
-                }
+                parts.append(ClipTextBudget.prefix(ocr, utf16Count: Self.searchOCRCharacterLimit))
             }
             parts.append(L10n.imageLabel)
             parts.append("image")
@@ -242,7 +241,8 @@ struct ClipItem: Codable {
         for token in tokens {
             var matched = PinyinHelper.matchesForSearch(text: haystack, token: token)
             if !matched, kind == .text, let text, !PinyinHelper.tokenContainsChinese(token) {
-                matched = text.range(of: token, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+                let scoped = ClipTextBudget.prefix(text, utf16Count: Self.searchBodyCharacterLimit)
+                matched = scoped.range(of: token, options: [.caseInsensitive, .diacriticInsensitive]) != nil
             }
             if !matched, kind == .image {
                 let desc = "\(L10n.imageLabel) image \(width ?? 0)x\(height ?? 0)"

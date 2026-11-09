@@ -1413,6 +1413,28 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
     }
 
     @objc private func copyAllPreviewText() {
+        let selectedRows = tableView.selectedRowIndexes.sorted()
+        if selectedRows.count > 1 {
+            let selectedItems = selectedRows.compactMap { row -> ClipItem? in
+                row < displayItems.count ? displayItems[row] : nil
+            }
+            let merged = selectedItems.compactMap { mergeableText(from: $0, includeFiles: true) }
+                .joined(separator: "\n")
+            guard !merged.isEmpty else { return }
+            ClipboardStore.shared.writeStringToPasteboard(merged)
+            triggerHaptic()
+            return
+        }
+        if selectedRows.count == 1,
+           let row = selectedRows.first,
+           row >= 0, row < displayItems.count {
+            let item = displayItems[row]
+            if item.kind == .text, let text = item.text, ClipTextBudget.isOversizedForPreview(text) {
+                ClipboardStore.shared.writeStringToPasteboard(text)
+                triggerHaptic()
+                return
+            }
+        }
         let str = previewTextView.plainTextForCopy()
         guard !str.isEmpty else { return }
         ClipboardStore.shared.writeStringToPasteboard(str)
@@ -1470,7 +1492,8 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             .foregroundColor: NSColor.labelColor
         ]
 
-        if let container = previewTextView.textContainer {
+        if attributed.length <= ClipTextBudget.previewDisplayUTF16,
+           let container = previewTextView.textContainer {
             previewTextView.layoutManager?.ensureLayout(for: container)
         }
     }
@@ -2072,10 +2095,13 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
         if item.isURL || item.isColor {
             return 320
         }
-        let trimmed = (item.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let looksLikeJSON = (trimmed.hasPrefix("{") && trimmed.hasSuffix("}"))
-            || (trimmed.hasPrefix("[") && trimmed.hasSuffix("]"))
-        if looksLikeJSON, TextTransformer.beautifyJSON(trimmed) != nil {
+        if let text = item.text, ClipTextBudget.isOversizedForPreview(text) {
+            return 500
+        }
+        if let text = item.text,
+           ClipTextBudget.looksLikeJSONContainer(text),
+           !ClipTextBudget.exceeds(text, utf16Count: ClipTextBudget.jsonParseUTF16),
+           TextTransformer.beautifyJSON(text) != nil {
             return 500
         }
         if item.lineCount > 24 || item.characterCount > 1200 {
@@ -2270,7 +2296,10 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             let merged = texts.joined(separator: "\n")
             previewHeader.stringValue = L10n.mergePreviewTitle
             previewMetaLabel.stringValue = L10n.mergePreviewMeta(selectedRows.count)
-            applyPreviewPlainText(merged, font: .monospacedSystemFont(ofSize: 12, weight: .regular))
+            applyPreviewPlainText(
+                ClipTextBudget.truncatedPreview(merged),
+                font: .monospacedSystemFont(ofSize: 12, weight: .regular)
+            )
             previewImageView.isHidden = true
             previewTextScrollView.isHidden = false
             quickLookButton.isHidden = true
@@ -2279,7 +2308,15 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             colorCardContainer.isHidden = true
             urlActionBar.isHidden = true
             previewTextBottomBar.isHidden = false
-            previewTextMetaLabel.stringValue = L10n.textCountInfo(chars: merged.count, lines: merged.components(separatedBy: "\n").count)
+            let mergedChars = ClipTextBudget.utf16Length(merged)
+            if ClipTextBudget.exceeds(merged, utf16Count: ClipTextBudget.previewDisplayUTF16) {
+                previewTextMetaLabel.stringValue = L10n.previewTruncatedInfo(chars: mergedChars)
+            } else {
+                previewTextMetaLabel.stringValue = L10n.textCountInfo(
+                    chars: mergedChars,
+                    lines: ClipTextBudget.lineCount(merged)
+                )
+            }
             previewTextTopToURLConstraint?.isActive = false
             previewTextTopToDividerConstraint?.isActive = true
             previewImageBottomToSectionConstraint?.isActive = false
@@ -2395,7 +2432,10 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             applyPreviewPlainTextCached(urlText, font: .systemFont(ofSize: 13), itemID: item.id)
             previewTextScrollView.isHidden = false
             previewTextBottomBar.isHidden = false
-            previewTextMetaLabel.stringValue = L10n.textCountInfo(chars: urlText.count, lines: 1)
+            previewTextMetaLabel.stringValue = L10n.textCountInfo(
+                chars: ClipTextBudget.utf16Length(urlText),
+                lines: 1
+            )
         } else if item.kind == .file {
             previewHeader.stringValue = item.displayTitle
             previewMetaLabel.stringValue = "\(appPart)\(time) • \(L10n.typeFile) • \(fileSubtitle(for: item))"
@@ -2430,12 +2470,33 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             previewTextTopToDividerConstraint?.isActive = true
 
             let rawText = item.text ?? ""
-            let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+            previewCodeBlocks = []
+            markdownSegmentedControl.isHidden = true
+
+            if ClipTextBudget.isOversizedForPreview(rawText) {
+                previewHeader.stringValue = item.displayTitle
+                applyPreviewPlainTextCached(
+                    ClipTextBudget.truncatedPreview(rawText),
+                    font: .monospacedSystemFont(ofSize: 12, weight: .regular),
+                    itemID: item.id
+                )
+                var meta = "\(appPart)\(time) • \(L10n.typePlainText)"
+                if item.richFormatDropped {
+                    meta += " • " + L10n.richFormatDroppedShort
+                }
+                previewMetaLabel.stringValue = meta
+                previewTextMetaLabel.stringValue = L10n.previewTruncatedInfo(
+                    chars: ClipTextBudget.utf16Length(rawText)
+                )
+                previewTextBottomBar.isHidden = false
+                previewTextScrollView.isHidden = false
+                return
+            }
 
             // 智能 JSON 美化排版判断
             var isBeautifiedJSON = false
             var displayText = rawText
-            if (trimmed.hasPrefix("{") && trimmed.hasSuffix("}")) || (trimmed.hasPrefix("[") && trimmed.hasSuffix("]")),
+            if ClipTextBudget.looksLikeJSONContainer(rawText),
                let beautified = TextTransformer.beautifyJSON(rawText) {
                 previewHeader.stringValue = item.alias ?? L10n.typeJSON
                 displayText = beautified
@@ -2453,7 +2514,6 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
                 markdownSegmentedControl.selectedSegment = desiredSegment
             }
 
-            previewCodeBlocks = []
             if isMarkdown && isMarkdownPreviewMode {
                 let rendered = MarkdownRenderer.render(displayText, baseFontSize: 13)
                 previewCodeBlocks = rendered.codeBlocks
@@ -2479,8 +2539,8 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             if isMarkdown {
                 typeName = isMarkdownPreviewMode ? L10n.markdownTypePreview : L10n.markdownTypeRaw
             }
-            let cCount = rawText.count
-            let lCount = rawText.components(separatedBy: "\n").count
+            let cCount = ClipTextBudget.utf16Length(rawText)
+            let lCount = ClipTextBudget.lineCount(rawText)
             var meta = "\(appPart)\(time) • \(typeName)"
             if item.richFormatDropped {
                 meta += " • " + L10n.richFormatDroppedShort

@@ -4,6 +4,7 @@ enum TextTransformer {
     // MARK: - JSON
 
     static func beautifyJSON(_ input: String) -> String? {
+        guard ClipTextBudget.utf16Length(input) <= ClipTextBudget.jsonParseUTF16 else { return nil }
         guard let data = input.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data, options: []),
               let pretty = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
@@ -14,6 +15,7 @@ enum TextTransformer {
     }
 
     static func minifyJSON(_ input: String) -> String? {
+        guard ClipTextBudget.utf16Length(input) <= ClipTextBudget.jsonParseUTF16 else { return nil }
         guard let data = input.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data, options: []),
               let minData = try? JSONSerialization.data(withJSONObject: json, options: []),
