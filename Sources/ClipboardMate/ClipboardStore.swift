@@ -314,6 +314,12 @@ final class ClipboardStore: NSObject {
         appIconCache.countLimit = 80
         try? FileManager.default.createDirectory(at: imagesDir, withIntermediateDirectories: true)
         load()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleApplicationWillTerminate),
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
     }
 
     func startMonitoring(interval: TimeInterval = 0.15) {
@@ -983,6 +989,7 @@ final class ClipboardStore: NSObject {
 
     private let ocrQueue = DispatchQueue(label: "com.williamlao.clipboardmate.ocr", qos: .userInitiated)
     private let persistQueue = DispatchQueue(label: "com.williamlao.clipboardmate.persist", qos: .utility)
+    private var didFlushForTermination = false
 
     private static let ocrMaxPixel: Int = 2048
 
@@ -1145,9 +1152,30 @@ final class ClipboardStore: NSObject {
         }
     }
 
-    /// Wait for queued history encodes so a quit after a large copy does not drop the latest snapshot.
+    /// Drain `persistQueue` and write the current snapshot. Encode stays off the main thread;
+    /// the caller blocks until disk has the latest history (needed on quit).
     func flushPendingSave() {
-        persistQueue.sync {}
+        if Thread.isMainThread {
+            performTerminationFlush()
+        } else {
+            DispatchQueue.main.sync { self.performTerminationFlush() }
+        }
+    }
+
+    @objc private func handleApplicationWillTerminate(_ notification: Notification) {
+        flushPendingSave()
+    }
+
+    private func performTerminationFlush() {
+        guard !didFlushForTermination else { return }
+        didFlushForTermination = true
+        if historyLoadFailed, items.isEmpty { return }
+        let snapshot = items
+        let fileURL = self.fileURL
+        let backupURL = self.backupURL
+        persistQueue.sync {
+            self.writeSnapshot(snapshot, fileURL: fileURL, backupURL: backupURL)
+        }
     }
 
     private func writeSnapshot(_ snapshot: [ClipItem], fileURL: URL, backupURL: URL) {

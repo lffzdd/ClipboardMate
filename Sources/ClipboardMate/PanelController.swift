@@ -2507,35 +2507,6 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
 
             let detectedLang = isBeautifiedJSON ? CodeLanguage.json : SyntaxHighlighter.detectLanguage(displayText)
 
-            if ClipTextBudget.isOversizedForPreview(displayText) {
-                previewUntruncatedCopyText = displayText
-                markdownSegmentedControl.isHidden = true
-                let shown = ClipTextBudget.truncatedPreview(displayText)
-                if let lang = detectedLang {
-                    cacheAndApplyPreviewBase(
-                        SyntaxHighlighter.highlight(code: shown, language: lang, fontSize: 12),
-                        itemID: item.id
-                    )
-                } else {
-                    applyPreviewPlainTextCached(
-                        shown,
-                        font: .monospacedSystemFont(ofSize: 12, weight: .regular),
-                        itemID: item.id
-                    )
-                }
-                var meta = "\(appPart)\(time) • \(detectedLang?.displayName ?? L10n.typePlainText)"
-                if item.richFormatDropped {
-                    meta += " • " + L10n.richFormatDroppedShort
-                }
-                previewMetaLabel.stringValue = meta
-                previewTextMetaLabel.stringValue = L10n.previewTruncatedInfo(
-                    chars: ClipTextBudget.utf16Length(displayText)
-                )
-                previewTextBottomBar.isHidden = false
-                previewTextScrollView.isHidden = false
-                return
-            }
-
             let isMarkdown = (detectedLang == .markdown)
             markdownSegmentedControl.isHidden = !isMarkdown
             let desiredSegment = isMarkdownPreviewMode ? 0 : 1
@@ -2555,8 +2526,18 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
                     itemID: item.id
                 )
             } else if let lang = detectedLang {
-                let highlighted = SyntaxHighlighter.highlight(code: displayText, language: lang, fontSize: 12)
-                cacheAndApplyPreviewBase(highlighted, itemID: item.id)
+                let highlighted = SyntaxHighlighter.highlightPreview(code: displayText, language: lang, fontSize: 12)
+                cacheAndApplyPreviewBase(highlighted.attributed, itemID: item.id)
+                if highlighted.didTruncate {
+                    previewUntruncatedCopyText = rawText
+                }
+            } else if ClipTextBudget.isOversizedForPreview(displayText) {
+                previewUntruncatedCopyText = rawText
+                applyPreviewPlainTextCached(
+                    ClipTextBudget.truncatedPreview(displayText),
+                    font: .monospacedSystemFont(ofSize: 12, weight: .regular),
+                    itemID: item.id
+                )
             } else {
                 let font: NSFont = displayText.contains("\n")
                     ? .monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -2575,7 +2556,11 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
                 meta += " • " + L10n.richFormatDroppedShort
             }
             previewMetaLabel.stringValue = meta
-            previewTextMetaLabel.stringValue = L10n.textCountInfo(chars: cCount, lines: lCount)
+            if previewUntruncatedCopyText != nil {
+                previewTextMetaLabel.stringValue = L10n.previewTruncatedInfo(chars: cCount)
+            } else {
+                previewTextMetaLabel.stringValue = L10n.textCountInfo(chars: cCount, lines: lCount)
+            }
             previewTextBottomBar.isHidden = false
             previewTextScrollView.isHidden = false
         }
