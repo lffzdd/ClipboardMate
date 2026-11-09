@@ -475,6 +475,8 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
     private var previewBaseAttributedCache: NSAttributedString?
     private var previewBaseCacheItemID: UUID?
     private var previewBaseCacheMarkdownPreviewMode: Bool?
+    /// Full text that the current preview was truncated from, so Copy All is not limited to the visible prefix.
+    private var previewUntruncatedCopyText: String?
 
     // 侧边预览组件与分栏
     private var splitDivider: SplitDividerView!
@@ -1413,6 +1415,11 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
     }
 
     @objc private func copyAllPreviewText() {
+        if let full = previewUntruncatedCopyText, !full.isEmpty {
+            ClipboardStore.shared.writeStringToPasteboard(full)
+            triggerHaptic()
+            return
+        }
         let selectedRows = tableView.selectedRowIndexes.sorted()
         if selectedRows.count > 1 {
             let selectedItems = selectedRows.compactMap { row -> ClipItem? in
@@ -1424,16 +1431,6 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             ClipboardStore.shared.writeStringToPasteboard(merged)
             triggerHaptic()
             return
-        }
-        if selectedRows.count == 1,
-           let row = selectedRows.first,
-           row >= 0, row < displayItems.count {
-            let item = displayItems[row]
-            if item.kind == .text, let text = item.text, ClipTextBudget.isOversizedForPreview(text) {
-                ClipboardStore.shared.writeStringToPasteboard(text)
-                triggerHaptic()
-                return
-            }
         }
         let str = previewTextView.plainTextForCopy()
         guard !str.isEmpty else { return }
@@ -2284,6 +2281,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
 
     private func updatePreview() {
         guard isPreviewVisible else { return }
+        previewUntruncatedCopyText = nil
         updatePreviewLayoutButton()
         markdownSegmentedControl.isHidden = true
         let selectedRows = tableView.selectedRowIndexes.sorted()
@@ -2310,6 +2308,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             previewTextBottomBar.isHidden = false
             let mergedChars = ClipTextBudget.utf16Length(merged)
             if ClipTextBudget.exceeds(merged, utf16Count: ClipTextBudget.previewDisplayUTF16) {
+                previewUntruncatedCopyText = merged
                 previewTextMetaLabel.stringValue = L10n.previewTruncatedInfo(chars: mergedChars)
             } else {
                 previewTextMetaLabel.stringValue = L10n.textCountInfo(
@@ -2475,6 +2474,7 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
 
             if ClipTextBudget.isOversizedForPreview(rawText) {
                 previewHeader.stringValue = item.displayTitle
+                previewUntruncatedCopyText = rawText
                 applyPreviewPlainTextCached(
                     ClipTextBudget.truncatedPreview(rawText),
                     font: .monospacedSystemFont(ofSize: 12, weight: .regular),
@@ -2506,6 +2506,35 @@ final class PanelController: NSObject, NSSearchFieldDelegate, NSTextFieldDelegat
             }
 
             let detectedLang = isBeautifiedJSON ? CodeLanguage.json : SyntaxHighlighter.detectLanguage(displayText)
+
+            if ClipTextBudget.isOversizedForPreview(displayText) {
+                previewUntruncatedCopyText = displayText
+                markdownSegmentedControl.isHidden = true
+                let shown = ClipTextBudget.truncatedPreview(displayText)
+                if let lang = detectedLang {
+                    cacheAndApplyPreviewBase(
+                        SyntaxHighlighter.highlight(code: shown, language: lang, fontSize: 12),
+                        itemID: item.id
+                    )
+                } else {
+                    applyPreviewPlainTextCached(
+                        shown,
+                        font: .monospacedSystemFont(ofSize: 12, weight: .regular),
+                        itemID: item.id
+                    )
+                }
+                var meta = "\(appPart)\(time) • \(detectedLang?.displayName ?? L10n.typePlainText)"
+                if item.richFormatDropped {
+                    meta += " • " + L10n.richFormatDroppedShort
+                }
+                previewMetaLabel.stringValue = meta
+                previewTextMetaLabel.stringValue = L10n.previewTruncatedInfo(
+                    chars: ClipTextBudget.utf16Length(displayText)
+                )
+                previewTextBottomBar.isHidden = false
+                previewTextScrollView.isHidden = false
+                return
+            }
 
             let isMarkdown = (detectedLang == .markdown)
             markdownSegmentedControl.isHidden = !isMarkdown

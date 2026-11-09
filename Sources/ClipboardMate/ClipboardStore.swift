@@ -1145,6 +1145,11 @@ final class ClipboardStore: NSObject {
         }
     }
 
+    /// Wait for queued history encodes so a quit after a large copy does not drop the latest snapshot.
+    func flushPendingSave() {
+        persistQueue.sync {}
+    }
+
     private func writeSnapshot(_ snapshot: [ClipItem], fileURL: URL, backupURL: URL) {
         guard let data = try? JSONEncoder().encode(snapshot) else {
             NSLog("ClipboardMate: encode history failed")

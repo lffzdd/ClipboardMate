@@ -1016,7 +1016,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ])
     }
 
-    func applicationWillTerminate(_ notification: Notification) {}
+    func applicationWillTerminate(_ notification: Notification) {
+        ClipboardStore.shared.flushPendingSave()
+    }
 
     func applyPanelOpacityFromMenu() {
         panelController.applyStoredGlassTransparency()
