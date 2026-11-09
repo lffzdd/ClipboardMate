@@ -314,6 +314,12 @@ final class ClipboardStore: NSObject {
         appIconCache.countLimit = 80
         try? FileManager.default.createDirectory(at: imagesDir, withIntermediateDirectories: true)
         load()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleApplicationWillTerminate),
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
     }
 
     func startMonitoring(interval: TimeInterval = 0.15) {
@@ -982,6 +988,8 @@ final class ClipboardStore: NSObject {
     // MARK: - Vision 离线文字识别 (OCR)
 
     private let ocrQueue = DispatchQueue(label: "com.williamlao.clipboardmate.ocr", qos: .userInitiated)
+    private let persistQueue = DispatchQueue(label: "com.williamlao.clipboardmate.persist", qos: .utility)
+    private var didFlushForTermination = false
 
     private static let ocrMaxPixel: Int = 2048
 
@@ -1136,7 +1144,42 @@ final class ClipboardStore: NSObject {
         if historyLoadFailed, items.isEmpty {
             return
         }
-        guard let data = try? JSONEncoder().encode(items) else {
+        let snapshot = items
+        let fileURL = self.fileURL
+        let backupURL = self.backupURL
+        persistQueue.async { [weak self] in
+            self?.writeSnapshot(snapshot, fileURL: fileURL, backupURL: backupURL)
+        }
+    }
+
+    /// Drain `persistQueue` and write the current snapshot. Encode stays off the main thread;
+    /// the caller blocks until disk has the latest history (needed on quit).
+    func flushPendingSave() {
+        if Thread.isMainThread {
+            performTerminationFlush()
+        } else {
+            DispatchQueue.main.sync { self.performTerminationFlush() }
+        }
+    }
+
+    @objc private func handleApplicationWillTerminate(_ notification: Notification) {
+        flushPendingSave()
+    }
+
+    private func performTerminationFlush() {
+        guard !didFlushForTermination else { return }
+        didFlushForTermination = true
+        if historyLoadFailed, items.isEmpty { return }
+        let snapshot = items
+        let fileURL = self.fileURL
+        let backupURL = self.backupURL
+        persistQueue.sync {
+            self.writeSnapshot(snapshot, fileURL: fileURL, backupURL: backupURL)
+        }
+    }
+
+    private func writeSnapshot(_ snapshot: [ClipItem], fileURL: URL, backupURL: URL) {
+        guard let data = try? JSONEncoder().encode(snapshot) else {
             NSLog("ClipboardMate: encode history failed")
             return
         }
@@ -1147,8 +1190,10 @@ final class ClipboardStore: NSObject {
         }
         do {
             try data.write(to: fileURL, options: .atomic)
-            if !items.isEmpty {
-                historyLoadFailed = false
+            if !snapshot.isEmpty {
+                DispatchQueue.main.async { [weak self] in
+                    self?.historyLoadFailed = false
+                }
             }
         } catch {
             NSLog("ClipboardMate: write items.json failed: \(error)")

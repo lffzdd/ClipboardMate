@@ -274,12 +274,23 @@ enum SyntaxHighlighter {
     /// 识别文本的代码语言类型。
     /// Markdown 是文档容器，其它语言是载荷；围栏里的 Python 不能把整篇判成 Python。
     static func detectLanguage(_ text: String) -> CodeLanguage? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
+        let length = ClipTextBudget.utf16Length(text)
+        guard length > 0 else { return nil }
 
-        if looksLikeJSON(trimmed) {
-            return .json
+        if ClipTextBudget.looksLikeJSONContainer(text) {
+            if length > ClipTextBudget.jsonParseUTF16 {
+                return .json
+            }
+            let trimmedJSON = ClipTextBudget.prefix(text, utf16Count: ClipTextBudget.jsonParseUTF16)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if looksLikeJSON(trimmedJSON) {
+                return .json
+            }
         }
+
+        let sample = ClipTextBudget.prefix(text, utf16Count: ClipTextBudget.detectSampleUTF16)
+        let trimmed = sample.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
 
         let document = SourceDocument(trimmed)
         if document.isMarkdownContainer {
@@ -515,11 +526,35 @@ enum SyntaxHighlighter {
 
     // MARK: - 高亮渲染总入口
 
+    struct HighlightedPreview {
+        let attributed: NSAttributedString
+        let didTruncate: Bool
+    }
+
     /// 高亮代码（支持指定语言）
     static func highlight(code: String, language: CodeLanguage? = nil, fontSize: CGFloat = 12) -> NSAttributedString {
+        highlightPreview(code: code, language: language, fontSize: fontSize).attributed
+    }
+
+    /// Same as `highlight`, but reports when the displayed string was truncated so Copy All can use the original clip.
+    static func highlightPreview(code: String, language: CodeLanguage? = nil, fontSize: CGFloat = 12) -> HighlightedPreview {
         let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         let boldFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .semibold)
         let baseColor = NSColor.labelColor
+
+        // 超过 40,000 字符：截断后再着色，避免把整段大文本排进预览。
+        if ClipTextBudget.isOversizedForPreview(code) {
+            return HighlightedPreview(
+                attributed: NSAttributedString(
+                    string: ClipTextBudget.truncatedPreview(code),
+                    attributes: [
+                        .font: font,
+                        .foregroundColor: baseColor
+                    ]
+                ),
+                didTruncate: true
+            )
+        }
 
         let mutable = NSMutableAttributedString(
             string: code,
@@ -528,11 +563,6 @@ enum SyntaxHighlighter {
                 .foregroundColor: baseColor
             ]
         )
-
-        // 超过 40,000 字符防止主线程卡顿
-        if code.count > 40_000 {
-            return mutable
-        }
 
         let fullRange = NSRange(location: 0, length: (code as NSString).length)
         let lang = language ?? detectLanguage(code) ?? .generic
@@ -574,7 +604,7 @@ enum SyntaxHighlighter {
             highlightCodeLanguage(mutable: mutable, code: code, fullRange: fullRange, baseColor: baseColor, boldFont: boldFont, keywords: genericKeywords, types: [])
         }
 
-        return mutable
+        return HighlightedPreview(attributed: mutable, didTruncate: false)
     }
 
     // MARK: - 专用着色通道：Shell / Bash

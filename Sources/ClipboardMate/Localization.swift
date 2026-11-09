@@ -345,6 +345,11 @@ enum L10n {
     static func textCountInfo(chars: Int, lines: Int) -> String {
         isChinese ? "\(chars) 字符 • \(lines) 行" : "\(chars) chars • \(lines) lines"
     }
+    static func previewTruncatedInfo(chars: Int) -> String {
+        isChinese
+            ? "\(chars) 字符 • 预览已截断（粘贴仍为全文）"
+            : "\(chars) chars • preview truncated (paste is still full text)"
+    }
 
     // Files & Folders
     static var catFile: String { isChinese ? "文件" : "Files" }
